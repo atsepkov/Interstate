@@ -1,0 +1,40 @@
+{
+  "name": "interstate-js",
+  "description": "Compiler state manager, tracks variable states and probabilities at compile time - exposing the same kind of power a statically typed langauge would enjoy to your dynamically typed language. This state manager is in theory more powerful than what TypeScript can do due to its ability to think in probailities rather than static types.",
+  "homepage": "http://rapydscript.com",
+  "keywords": [
+    "javascript",
+    "rapydscript",
+    "interstate",
+    "language",
+    "compiler"
+  ],
+  "main": "lib/interstate.js",
+  "scripts": {
+    "test": "rapydscript --imp src -x tests/unit_tests.pyj",
+    "preversion": "npm test",
+    "postversion": "npm publish",
+    "build-self": "rapydscript src/interstate.pyj -o lib/interstate.js"
+  },
+  "version": "0.0.2",
+  "license": "BSD-2-Clause",
+  "engines": {
+    "node": ">=0.12.0"
+  },
+  "maintainers": [
+    "Alexander Tsepkov <atsepkov@rapydscript.com> (http://rapydscript.com)"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/atsepkov/Interstate.git"
+  },
+  "dependencies": {},
+  "devDependencies": {},
+  "bugs": {
+    "url": "https://github.com/atsepkov/Interstate/issues"
+  },
+  "directories": {
+    "test": "tests"
+  },
+  "author": "Alexander Tsepkov"
+}
