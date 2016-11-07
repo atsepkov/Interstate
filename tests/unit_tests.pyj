@@ -1,0 +1,213 @@
+from interstate import State, Timeline
+
+assert = require('assert')
+
+
+"""
+Basic Timeline Tests:
+
+    These tests test the features of a timeline object in a vacuum, as if all
+    assignments and uses happen in the same scope. We're not yet concerned with
+    tracking this timeline through scopes.
+"""
+
+# lax variable timeline is based on observed assignments
+lax = Timeline('foo', 'Number') # initialize to Number
+assert(lax.canAlwaysUseFor('Number'))           # allowed
+
+lax.setVar('String')            # assign String to var (no error)
+assert(lax.canUseFor('Number'))                 # allowed
+assert(lax.canUseFor('String'))                 # allowed
+assert(not lax.canUseFor('Boolean'))            # not allowed
+assert(not lax.canAlwaysUseFor('Number'))       # not allowed, because it could be a String
+assert.throws(
+    def():                                      # not allowed because neither String nor Number can be used as a function
+        lax.addCall({
+            inputs: ['Number']
+        })
+    ,
+    /not a callable object/
+)
+lax.setVar({
+    type: 'Function',
+    inputs: ['Number'],
+    returns: ['Number']
+})
+assert(lax.addCall({                            # allowed because of above setVar, also check that it gives us number return type
+    inputs: ['Number']
+}) == [{
+    type: 'Number'
+}])
+assert.throws(
+    def():                                      # not allowed because inputs don't match
+        lax.addCall({
+            inputs: []
+        })
+    ,
+    /allowed signatures/
+)
+
+# function signature checks
+nested = Timeline('baz', {
+    type: 'Function',
+    inputs: ['Number', 'Number'],
+    returns: ['Beans', 'Nuts']
+})
+assert.throws(
+    def():                                      # not allowed because inputs don't match
+        lax.addCall({
+            inputs: [nested.getSignature()[0]]
+        }, 'biz')
+    ,
+    /allowed signatures/
+)
+lax.setVar({                                    # declare correct nested function
+    type: 'Function',
+    inputs: [{
+        type: 'Function',
+        inputs: ['Number', 'Number'],
+        returns: ['Beans', 'Nuts']
+    }],
+    returns: ['Apples']
+})
+assert(lax.addCall({                            # try again, now this call is allowed - and the output is of type Apples
+    inputs: [nested.getSignature()[0]]
+}, 'biz') == [{
+    type: 'Apples'
+}])
+
+# strict variable timeline is based on enforced assignments
+strict = Timeline('foo', 'Number', ['Number', 'Boolean'])
+strict.setVar('Number')                         # allowed
+strict.setVar('Boolean')                        # allowed
+assert.throws(
+    def():                                      # not allowed because it's not one of declared types
+        strict.setVar('String')
+    ,
+    /Can't assign value of type/
+)
+
+
+"""
+State Tests:
+
+    These tests test the interaction of state and timelines, how timelines are generated
+    based on current state and how they can be manipulated.
+"""
+s = State()                                     # initialize the global state
+
+# lax scope
+s.newScope('function', 'foo')                   # start declaration of a new function named 'foo'
+s.setReturn('RegExp')                           # add a return of type RegExp to current scope
+s.setReturn('String')                           # add a return of type String to current scope
+s.endScope()                                    # pop the scope, in turn generating a 'foo' function in parent scope
+lax1 = s.getTimeline('foo')                     # retrieve the timeline of a 'foo' object, which maps to the function we declared
+
+assert(lax1.addCall({                           # allowed because our function definition was vague and did not specify inputs
+    inputs: ['Number', 'Boolean']
+}) == [{
+    type: 'RegExp'
+}, {
+    type: 'String'
+}])                                             # the possible outputs match up with what we declared while generating the scope
+
+# strict scope
+def setupBar():
+    s.newScope('function', 'bar', {             # this time we specify a function annotation
+        inputs: ['Number'],
+        returns: ['String', 'Number']           # state won't be happy until it observes BOTH of these in return statements
+    })
+setupBar()
+assert.throws(
+    def():                                      # trying to add an incompatible return to the scope will raise an error
+        s.setReturn('Boolean')
+    ,
+    /Annotation states that function returns/
+)
+assert.throws(
+    def():                                      # trying to end scope without a return specified by annotation will raise an error
+        s.endScope()
+    ,
+    /Annotation states that function returns/
+)
+setupBar()                                      # rerun setup because previous assert broke our scope
+s.setReturn('Number')                           # number is allowed
+s.setReturn('Number')                           # multiple returns of same type are allowed
+assert.throws(
+    def():                                      # error, still missing String return
+        s.endScope()
+    ,
+    /Annotation states that function returns/
+)
+
+# try again, this time it should work
+setupBar()
+s.setReturn('Number')
+s.setReturn('String')
+s.endScope()
+
+# now let's try to get that timeline and use it
+strict1 = s.getTimeline('bar')
+assert.throws(
+    def():                                      # error, using it with wrong input
+        strict1.addCall({
+            inputs: ['String']
+        })
+    ,
+    /allowed signatures/
+)
+
+assert(strict1.addCall({                        # allowed call results in correct return list
+    inputs: ['Number']
+}) == [{
+    type: 'Number'
+}, {
+    type: 'String'
+}])
+
+# classes
+s.newScope('class', 'Human')                    # start a new class
+s.setParent('Animalia')                         # inherit from an unknown class, ok because it could come from external libs
+s.endScope()                                    # finish class declaration
+
+# build/initialize a variable to an instance of Human class
+jack = Timeline('jack', s.getTimeline('Human').addCall({
+    inputs: []
+})[0])
+assert(jack.getSignature() == [{                # signature states correct return type
+    type: 'Human',
+    parent: {
+        type: 'Animalia',
+        external: True
+    }
+}])
+
+# build a new class
+s.newScope('class', 'Scientist')
+s.setParent('Human')
+s.endScope()
+
+# declare tom to be an instance of this class
+tom = Timeline('tom', s.getTimeline('Scientist').addCall({
+    inputs: []
+})[0])
+tom.setVar('Number')                            # tom can now be a number, possibly incompatible with the class we originally expected
+
+# declare yet another class
+s.newScope('class', 'Physicist')
+s.setParent('Scientist')
+s.endScope()
+
+einstein = Timeline('einstein', s.getTimeline('Physicist').addCall({
+    inputs: []
+})[0])
+
+assert(jack.canAlwaysUseFor('Human'))           # self - yes
+assert(not jack.canAlwaysUseFor('Scientist'))   # child - no
+assert(tom.canUseFor('Human'))                  # parent - yes
+assert(not tom.canAlwaysUseFor('Human'))        # no, ambiguity between Human and Number
+assert(einstein.canAlwaysUseFor('Animalia'))    # grandparent - yes
+
+
+print('ALL TESTS PASSED')
+# test(foo: Number, callback: Function(Number, Number) -> Number) -> Number
