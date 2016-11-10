@@ -28,7 +28,7 @@ def byType(a, b):
 
 def normalize(arg):
     if not arg:
-        raise Error()
+        raise Error("No argument specified")
     # normalizes the passed in argument into a compatible variable type
     if type(arg) is 'String':
         return { type: arg }        # variable or function with unknown signature
@@ -45,11 +45,11 @@ def normalize(arg):
 def stringifySignature(varType):
     # convert element signature to printable version
     element = type(varType) is 'String' ? normalize(varType) : varType
-    if element.type is 'Function' and element.inputs:
+    if (element.type is 'Function' or not element.type) and element.inputs:
         signature = 'Function(' + [stringifySignature(arg) for arg in element.inputs].join(', ') + ')'
         if element.returns:
             returns = [stringifySignature(arg) for arg in element.returns].join(' or ')
-            signature += ' -> ' + (element.returns.length > 1 ? '(' + returns + ')' : returns)
+            signature += ' -> ' + (element.returns.length > 1 ? '(' + returns + ')' : returns or 'Undefined')
         return signature
     return element.type
 
@@ -187,6 +187,9 @@ class Timeline:
                 for prop in properties:
                     self.properties[prop] = Timeline(self.name + '.' + prop, properties[prop])
             self.setVar(initialType)
+        self.delayedLogic = {
+            'call': []
+        }
 
     def setVar(self, arg):
         # sets this variable, for now only type is settable, perhaps value in the future as well
@@ -224,27 +227,37 @@ class Timeline:
         # adds a reference to this variable
         self.references += 1
 
-    def addCall(self, callSignature, alias=self.name):
+    def addCall(self, inputs, alias=self.name):
         # logs a call into our state tracker and returns the call's return signature
+        # inputs: array of timelines
         self.references += 1
-        callSignature.inputs = [normalize(x) for x in callSignature.inputs]
         if self.enforced:
             signatureList = self.enforced
         else:
             signatureList = self.timeline
         callable = False
-        found = []  # if length is 1, we have 1 function call that satisfies the requirement
+        found = False  # if True, we have at least 1 function call that satisfies the requirement
+        returns = []
         for expectedSignature in signatureList:
             matches = False
             if expectedSignature.type in ['Function', 'Class']:
-                print(expectedSignature, callSignature)
                 callable = True
                 if expectedSignature.inputs:
                     # compare input types against expected types
-                    if callSignature.inputs == expectedSignature.inputs:
-                        matches = True
+                    if expectedSignature.inputs.length >= inputs.inputs.length: # fewer inputs = ok, more inputs = no
+                        for index, timeline in enumerate(inputs.inputs):
+                            if self.enforced:
+                                if not timeline.canUseFor(expectedSignature.inputs[index]):
+                                    break
+                            else:
+                                if not timeline.canUseFor(expectedSignature.inputs[index]):
+                                    break
+                            if index is inputs.inputs.length - 1:
+                                matches = True
+                                found = True
                 else:
                     # no point in continuing, vague function definition means every call signature is allowed
+                    found = True
                     matches = True
 
                 if not matches: continue
@@ -256,27 +269,38 @@ class Timeline:
                         if newReturn.type is '?':
                             # give up, vague definition, tell the caller that the return can be anything
                             return { type: '?' }
-                        for existingReturn in found:
+                        for existingReturn in returns:
                             if newReturn == existingReturn:
                                 exists = True
                                 break
                         if not exists:
-                            found.push(newReturn)
+                            returns.push(newReturn)
                 else:
                     # the return can be anything
-                    found = [{
+                    returns = [{
                         type: '?'
                     }]
                     break
 
         if not callable:
             raise Error("'" + alias + "' is not a callable object")
-        elif not found.length:
+        elif not found:
             # no valid signature found for this function call
+            stringifyTimeline = def(timeline):
+                sig = timeline.getSignature()
+                return [stringifySignature(x) for x in sig].join(' or ')
+            callSignature = [stringifyTimeline(elem) for elem in inputs.inputs].join(', ')
+#            allowedFunctions = [[stringifySignature(input) for input in elem.inputs].join(', ') for elem in signatureList if elem.type is 'Function'].join(' or ')
             allowedFunctions = [stringifySignature(elem) for elem in signatureList if elem.type is 'Function'].join(' or ')
-            if not callSignature.type: callSignature.type = 'Function'  # allows correct stringification
-            raise Error("Can't call function " + alias + " with signature " + stringifySignature(callSignature) + ", allowed signatures: " + allowedFunctions)
-        return found
+            raise Error("Can't call function " + alias + " with signature 'Function(" + callSignature + ")', allowed signatures: " + allowedFunctions)
+
+        for command in self.delayedLogic['call']:
+            command(inputs)
+        return returns
+
+    def onCall(self, function):
+        # add logic to trigger later (i.e. delay checking the variable timeline until)
+        self.delayedLogic['call'].push(function)
 
     def getSignature(self):
         # returns the signature for this object
@@ -330,16 +354,21 @@ class Timeline:
             return True
         return False
 
+    # --- logic to delay execution until a later time ---
+
+    def addDelayed(self, function):
+        self.delayedLogic.push(function)
+
+    def triggerDelayed(self):
+        # triggers delayed logic
+        for function in self.delayedLogic:
+            function()
+
 
 class State:
     def __init__(self):
-        self.scopes = [{
-            type: 'global',     # scope type
-            vars: {},           # variables in this scope
-            functions: {},      # list of functions declared in this scope and their signatures
-            classes: {},        # classes in this scope
-            nonlocal: {},       # variables shared with outer scope
-        }]
+        self.scopes = []
+        self.newScope('global')
         self.functionScope = -1 # inner-most function scope
         self.classScope = -1    # inner-most class scope
 
@@ -352,6 +381,10 @@ class State:
             functions: {},      # list of functions declared in this scope and their signatures
             classes: {},        # classes in this scope
             nonlocal: {},       # variables shared with outer scope
+            delayed: {
+                'endScope': [], # list of functions to trigger when endScope is called
+                'call': []      # list of functions to trigger when addCall is called on resulting timeline
+            }
         })
         if scopeType is 'class':
             self.classScope = self.scopes.length - 1
@@ -368,13 +401,23 @@ class State:
         top = self.scopes.pop()
         if top.type is 'function':
             for index, scope in enumerate(reversed(self.scopes)):
-                if scope.type is 'function': self.functionScope = index
+                if scope.type is 'function':
+                    self.functionScope = index
+                    break
+                elif scope.type is 'global':
+                    self.functionScope = -1
+                    break
         elif top.type is 'class':
             for index, scope in enumerate(reversed(self.scopes)):
-                if scope.type is 'class': self.classScope = index
+                if scope.type is 'class':
+                    self.classScope = index
+                    break
+                elif scope.type is 'global':
+                    self.classScope = -1
+                    break
 
         if top.type is 'function':
-            if top.annotation and top.annotation.returns != top.seenReturns:
+            if top.annotation and top.annotation.returns and top.annotation.returns != top.seenReturns:
                 raise Error(
                     "Annotation states that function returns " +
                     [stringifySignature(x) for x in top.annotation.returns].join(' or ') +
@@ -383,10 +426,10 @@ class State:
             if top.name:
                 if top.annotation:
                     # annotation is specified, use exactly that
-                    self.scopes[-1].functions[top.name] = Timeline(top.name, top.annotation)
+                    timeline = self.scopes[-1].functions[top.name] = Timeline(top.name, top.annotation)
                 else:
                     # no annotation is specified, use the signature we observed
-                    self.scopes[-1].functions[top.name] = Timeline(top.name, {
+                    timeline = self.scopes[-1].functions[top.name] = Timeline(top.name, {
                         # TODO: count arguments being passed
                         type: 'Function',
                         returns: top.seenReturns
@@ -394,7 +437,7 @@ class State:
         elif top.type is 'class':
             # we're returning a class, which is effectively a function that generates the variable of the type
             # defined by class name
-            self.scopes[-1].classes[top.name] = Timeline(top.name, {
+            timeline = self.scopes[-1].classes[top.name] = Timeline(top.name, {
                 type: 'Class',
                 properties: top.staticMethods,
 #                inputs: 
@@ -408,6 +451,14 @@ class State:
         # in the future, or let the user handle it manually, they should be able to since they have access to the entire
         # popped scope object
 
+        if timeline:
+            for command in top.delayed['call']:
+                timeline.onCall(command)
+        for command in top.delayed['endScope']:
+            # trigger every delayed action and pass it scope in case it needs to do something with it, this is useful
+            # for both handling imports as well as handling cases like self-referencing classes that may need the
+            # entire class to be parsed before triggering the logic
+            command(top)
         return top
 
     def setParent(self, name):
@@ -442,7 +493,7 @@ class State:
         else:
             # new declaration
             # make sure to assign to top-most class or function scope
-            self.scopes[Math.max(self.classScope, self.functionScope)].vars[name] = Timeline(name, varType)
+            self.scopes[Math.max(0, self.classScope, self.functionScope)].vars[name] = Timeline(name, varType)
 
     def setReturn(self, varType):
         # document a return for current scope
@@ -477,7 +528,15 @@ class State:
         # if it's not found, this could be a variable from outside library or global
         return timeline
 
-    def addCall(self, signature):
+    def onEndScope(self, function):
+        # performs the function after current scope terminates, this is useful for handling self-references
+        # within classes, like reference to self.staticMethod()
+        self.scopes[-1].delayed['endScope'].push(function)
+
+    def onCall(self, function):
+        self.scopes[-1].delayed['call'].push(function)
+
+    def addCall(self, name, signature):
         # add function call, this time we check if the annotation matches
         timeline = self.getTimeline(name)
         if timeline: timeline.addCall(signature)

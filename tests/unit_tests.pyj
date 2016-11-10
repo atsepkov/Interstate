@@ -20,10 +20,11 @@ assert(lax.canUseFor('Number'))                 # allowed
 assert(lax.canUseFor('String'))                 # allowed
 assert(not lax.canUseFor('Boolean'))            # not allowed
 assert(not lax.canAlwaysUseFor('Number'))       # not allowed, because it could be a String
+num = Timeline('num', 'Number')
 assert.throws(
     def():                                      # not allowed because neither String nor Number can be used as a function
         lax.addCall({
-            inputs: ['Number']
+            inputs: [num]
         })
     ,
     /not a callable object/
@@ -34,7 +35,7 @@ lax.setVar({
     returns: ['Number']
 })
 assert(lax.addCall({                            # allowed because of above setVar, also check that it gives us number return type
-    inputs: ['Number']
+    inputs: [num]
 }) == [{
     type: 'Number'
 }])
@@ -56,7 +57,7 @@ nested = Timeline('baz', {
 assert.throws(
     def():                                      # not allowed because inputs don't match
         lax.addCall({
-            inputs: [nested.getSignature()[0]]
+            inputs: [nested]
         }, 'biz')
     ,
     /allowed signatures/
@@ -71,7 +72,7 @@ lax.setVar({                                    # declare correct nested functio
     returns: ['Apples']
 })
 assert(lax.addCall({                            # try again, now this call is allowed - and the output is of type Apples
-    inputs: [nested.getSignature()[0]]
+    inputs: [nested]
 }, 'biz') == [{
     type: 'Apples'
 }])
@@ -102,9 +103,10 @@ s.setReturn('RegExp')                           # add a return of type RegExp to
 s.setReturn('String')                           # add a return of type String to current scope
 s.endScope()                                    # pop the scope, in turn generating a 'foo' function in parent scope
 lax1 = s.getTimeline('foo')                     # retrieve the timeline of a 'foo' object, which maps to the function we declared
+boolean = Timeline('boolean', 'Boolean')
 
 assert(lax1.addCall({                           # allowed because our function definition was vague and did not specify inputs
-    inputs: ['Number', 'Boolean']
+    inputs: [num, boolean]
 }) == [{
     type: 'RegExp'
 }, {
@@ -148,17 +150,18 @@ s.endScope()
 
 # now let's try to get that timeline and use it
 strict1 = s.getTimeline('bar')
+string = Timeline('string', 'String')
 assert.throws(
     def():                                      # error, using it with wrong input
         strict1.addCall({
-            inputs: ['String']
+            inputs: [string]
         })
     ,
     /allowed signatures/
 )
 
 assert(strict1.addCall({                        # allowed call results in correct return list
-    inputs: ['Number']
+    inputs: [num]
 }) == [{
     type: 'Number'
 }, {
@@ -207,6 +210,51 @@ assert(not jack.canAlwaysUseFor('Scientist'))   # child - no
 assert(tom.canUseFor('Human'))                  # parent - yes
 assert(not tom.canAlwaysUseFor('Human'))        # no, ambiguity between Human and Number
 assert(einstein.canAlwaysUseFor('Animalia'))    # grandparent - yes
+
+# now let's create a situation where at the time of declaration the signature for a variable is invalid, but at the time of a call it is
+'''
+def qux(d:Number):
+    pass
+
+a = 'foo'
+def baz(b:Number, c:Number) -> Number:
+    qux(a)
+    return b + c
+
+a = 4
+baz(1, 2)
+'''
+s.newScope('function', 'qux', {
+    inputs: ['Number'],
+    returns: []
+})
+s.endScope()
+s.setVar('a', 'String')
+s.newScope('function', 'baz', {
+    inputs: ['Number', 'Number'],
+    returns: ['Number']
+})
+# direct call fails
+assert.throws(
+    def():
+        s.addCall('qux', {
+            inputs: [s.getTimeline('a')]
+        })
+    ,
+    /allowed signatures/
+)
+# delayed call succeeds
+s.onCall(def(callSignature):
+    s.addCall('qux', {
+        inputs: [s.getTimeline('a')]
+    })
+)
+s.setReturn('Number')
+s.endScope()
+s.setVar('a', 'Number')
+s.addCall('baz', {
+    inputs: [num, num]
+})
 
 
 print('ALL TESTS PASSED')
