@@ -11,12 +11,12 @@
   ],
   "main": "lib/interstate.js",
   "scripts": {
-    "test": "rapydscript --imp src -x tests/unit_tests.pyj",
+    "test": "rapydscript --imp src -p -x tests/unit_tests.pyj",
     "preversion": "npm test",
     "postversion": "npm publish",
     "build-self": "rapydscript src/interstate.pyj -o lib/interstate.js"
   },
-  "version": "0.0.2",
+  "version": "0.0.3",
   "license": "BSD-2-Clause",
   "engines": {
     "node": ">=0.12.0"
