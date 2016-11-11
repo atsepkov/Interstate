@@ -229,6 +229,68 @@ class Timeline:
         # adds a reference to this variable
         self.references += 1
 
+    def alignInputs(self, inputs):
+        '''
+        for kwargs-based functions call this first to move inputs around into correct order based on
+        detected function signature, possible returns are:
+            same inputs array but with arguments in correct order
+            None:   order couldn't be determined for some reason
+
+        args have to be in the following format:
+            {
+                ?name: item
+                data: anything you want (usually the AST node itself)
+            }
+        '''
+        def byName(name):
+            return def(element):
+                return name is element.name
+        if self.enforced:
+            signatureList = self.enforced
+        else:
+            signatureList = self.timeline
+        found = False  # if True, we have at least 1 function call that satisfies the requirement
+        for expectedSignature in signatureList:
+            if expectedSignature.type in ['Function', 'Class']:
+                if expectedSignature.inputs:
+                    argMisalignment = inputs.length - expectedSignature.inputs.length
+                    if argMisalignment > 0 or argMisalignment < 0 and not expectedSignature.inputs[inputs.length].default:
+                        # signature has to match number of arguments unless the missing arguments are optional
+                        continue
+                    outputs = Array(expectedSignature.inputs.length)
+                    failed = False
+                    namesStarted = False
+                    for idx, input in enumerate(inputs):
+                        if namesStarted and not input.name:
+                            raise Error("Non-keyword argument after keyword argument in function call to " + self.name + "().")
+                        if input.name:
+                            # named arguments started, resolve position
+                            namesStarted = True
+                            index = expectedSignature.inputs.findIndex(byName(input.name))
+                            if index is -1:
+                                # TODO: probably throw a warning here due to amibguity
+                                failed = True
+                                break # not the right signature, don't error yet because there may be a right one later
+                            elif outputs[index]:
+                                raise Error("" + self.name + "() got multiple values for keyword argument '" + input.name + "'")
+                            else:
+                                # inject named argument into correct position
+                                outputs[index] = input
+                        else:
+                            # named arguments didn't start yet, maintain same order
+                            outputs[idx] = input
+                    if not failed:
+                        # found something that satisfies the signature perfectly, return it
+                        found = True
+                        return outputs
+                else:
+                    # we found something that satisfies the signature, but there isn't enough information to resolve arguments
+                    # tentatively take credit for it but continue searching for better matches
+                    found = True
+                    continue
+        # not found, but let addCall deal with it
+        return None
+
     def addCall(self, inputs, alias=self.name):
         # logs a call into our state tracker and returns the call's return signature
         # inputs: array of timelines
@@ -249,7 +311,7 @@ class Timeline:
                     argMisalignment = inputs.inputs.length - expectedSignature.inputs.length
                     if argMisalignment > 0 or argMisalignment < 0 and not expectedSignature.inputs[inputs.inputs.length].default:
                         # signature has to match number of arguments unless the missing arguments are optional
-                        break
+                        continue
                     for index, timeline in enumerate(inputs.inputs):
                         if self.enforced:
                             if not timeline.canUseFor(expectedSignature.inputs[index]):
@@ -607,6 +669,13 @@ class State:
 
     def onCall(self, function):
         self.scopes[-1].delayed['call'].push(function)
+
+    def alignInputs(self, name, inputs):
+        timeline = self.getTimeline(name)
+        if timeline:
+            return timeline.alignInputs(inputs)
+        else:
+            return None
 
     def addCall(self, name, signature):
         # add function call, this time we check if the annotation matches

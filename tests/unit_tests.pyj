@@ -254,6 +254,41 @@ s.addCall('bar1', {
 s.addCall('bar1', {
     inputs: [num, num, num]
 })
+'''
+now let's try compile-time kwargs resolution:
+
+def bar1(a, b, c):  # already declared
+    ...
+
+bar1(c=num, a, b)       # error
+bar1(a, b, a=num)       # error
+bar1(a, c=num, b=num)   # ok
+'''
+assert.throws(
+    def():
+        print(s.alignInputs('bar1', [
+            { name: 'c', data: num },
+            { data: num },
+            { data: num }
+        ]))
+    ,
+    /Non-keyword argument after keyword argument/
+)
+assert.throws(
+    def():
+        print(s.alignInputs('bar1', [
+            { data: num },
+            { data: num },
+            { name: 'a', data: num }
+        ]))
+    ,
+    /got multiple values for keyword argument/
+)
+assert([input.data for input in s.alignInputs('bar1', [
+    { data: 'foo' },
+    { name: 'c', data: 'baz' },
+    { name: 'b', data: 'bar' }
+])] == ['foo', 'bar', 'baz'])
 
 # now let's create a situation where at the time of declaration the signature for a variable is invalid, but at the time of a call it is
 '''

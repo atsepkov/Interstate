@@ -114,3 +114,46 @@ s.addCall('baz', {                  # this s.addCall will also trigger s.addCall
     inputs: [num, num]
 })
 ```
+
+Moreover, passing fewer or more arguments than expected to a function call will throw an error. This added safety check allows for much saner
+behavior than regular JavaScript.
+
+### Kwargs Resolution
+Interstate can be used to fix function calls with keyword arguments without requiring the run-time `kwargs` decorator which slows down code
+significantly, adds a rigidity of not being able to rename variables and makes output code harder to read. Imagine the following example:
+
+```python
+def bar(a, b, c):
+	...
+
+# enforce proper calls:
+bar(c=1, 2, 3)                      # error: Non-keyword argument after keyword argument
+bar(1, 2, a=3)                      # error: multiple values for argument 'a'
+bar(1, c=2, b=3)                    # ok, but switch 'b' and 'c' in function call
+```
+
+And here is how you would test all 3 cases via Interstate:
+
+```python
+s.newScope('function', 'bar')
+s.setArgs([{ name: 'a' }, { name: 'b' }, { name: 'c' }])
+s.endScope()
+
+s.alignInputs('bar', [
+	{ name: 'c', data: 1 },
+	{ data: 2 },
+	{ data: 3 }
+])
+
+s.alignInputs('bar', [
+	{ data: 1 },
+	{ data: 2 },
+	{ name: 'a', data: 3 }
+])
+
+s.alignInputs('bar', [
+	{ data: 1 },
+	{ name: 'c', data: 2 }
+	{ name: 'b', data: 3 }
+])
+```
