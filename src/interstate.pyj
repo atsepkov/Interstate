@@ -395,6 +395,16 @@ class State:
                 scope.annotation = normalize(annotation)
             scope.seenReturns = []
             self.functionScope = self.scopes.length - 1
+        elif scopeType in ['if', 'switch', 'try']:
+            scope = self.scopes[-1]
+            scope.states = [{}]     # each state will append a hash here, which will store variables that got set in that state
+            scope.final = False     # once scope reaches its final state, this will be changed to true
+
+    def nextScopeState(final=False):
+        # transitions through scope states (i.e. if/else, try/catch)
+        # final implies that this state will always be the last state (i.e. else rather than elif, default case for switch)
+        scope = self.scopes[-1]
+        scope.final = final
 
     def endScope(self):
         # closes the top-most scope, returns the scope and adds function/class signature to parent scope
@@ -447,6 +457,21 @@ class State:
                     parent: top.parent and top.parent.returns ? top.parent.returns[0] : None
                 }]
             })
+        elif top.states and top.final:
+            # for every variable that appears in all scopes and has final scope, we replace existing timeline
+            # we also set this variable on parent's scope if parent is stateful in order to gracefully handle
+            # nested conditionals (we only need to worry about replace cases since add has already been handled)
+            for var in top.states[0]:
+                signature = [top.states[0][var]]
+                for state in top.states[1:]:
+                    if var in state:
+                        signature.concat(var)
+                    else:
+                        break
+                    if state is top.states[-1]:
+                        if self.scopes[-1].states:
+                            # TODO: do concat vs init, also make sure this is unique
+                            self.scopes[-1].states[var] = signature
         # NOTE: we do not handle imports here due to the number of available import systems, I may add some logic for it
         # in the future, or let the user handle it manually, they should be able to since they have access to the entire
         # popped scope object
@@ -475,6 +500,29 @@ class State:
             parent.external = True
         scope.parent = parent
 
+    def setArgs(self, args):
+        '''
+        arg format:
+            {
+                name: 'argname',
+                ?default: 'value'
+            }
+        '''
+        scope = self.scopes[self.functionScope]
+        # TODO: change to existential operator
+        if scope.annotation and scope.annotation.inputs and scope.annotation.inputs.length is not args.length:
+            raise Error("Specified arguments don't line up with function annotation.")
+        defaultStarted = False
+        for arg in args:
+            if not arg.name:
+                raise Error("Invalid format for args, required format is an array of { name: 'string', ?default: ... }")
+            if arg.default:
+                defaultStarted = True
+            else:
+                # raise an error when seeing something like 'def func(a=5, b)'
+                if defaultStarted: raise Error("Missing default value for argument '" + arg.name + "' of function '" + scope.name + "'. Arguments with default values must come last in function declaration.")
+        scope.args = args
+
     def canUseFor(self, name, varType):
         # returns true if this timeline can be used to satisfy function signature requiring varType
         return self.getTimeline(name).canUseFor(varType)
@@ -494,6 +542,12 @@ class State:
             # new declaration
             # make sure to assign to top-most class or function scope
             self.scopes[Math.max(0, self.classScope, self.functionScope)].vars[name] = Timeline(name, varType)
+
+        if self.states:
+            if name in self.states[-1]:
+                self.states[-1][name].push(normalize(varType))
+            else:
+                self.states[-1][name] = [normalize(varType)]
 
     def setReturn(self, varType):
         # document a return for current scope

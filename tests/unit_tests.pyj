@@ -211,6 +211,32 @@ assert(tom.canUseFor('Human'))                  # parent - yes
 assert(not tom.canAlwaysUseFor('Human'))        # no, ambiguity between Human and Number
 assert(einstein.canAlwaysUseFor('Animalia'))    # grandparent - yes
 
+# now test function input signature
+s.newScope('function', 'bar1')
+assert.throws(
+    def():
+        s.setArgs(['a', 'b', 'c'])
+    ,
+    /Invalid format/
+)
+assert.throws(
+    def():
+        s.setArgs([{ name: 'a', default: 'test' }, { name: 'b' }, { name: 'c' }])
+    ,
+    /Arguments with default values must come last/
+)
+s.setArgs([{ name: 'a' }, { name: 'b' }, { name: 'c', default: 'test' }])
+s.endScope()
+
+#assert.throws(
+#    def():
+#        s.addCall('bar1', {
+#            inputs: [num, num]
+#        })
+#    ,
+#    /NOT YET READY/
+#)
+
 # now let's create a situation where at the time of declaration the signature for a variable is invalid, but at the time of a call it is
 '''
 def qux(d:Number):

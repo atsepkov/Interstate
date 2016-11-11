@@ -26,7 +26,8 @@ Features of Interstate:
 
 ## Usage
 
-```
+### Function Declaration
+```python
 from interstate import State, Timeline
 
 s = State()                        # create a new state object
@@ -42,7 +43,10 @@ s.newScope('function', 'bar', {
 
 # terminate current scope, check that return types are met, and create relevant variables
 s.endScope()
+```
 
+### Class Declaration
+```python
 s.newScope('class', 'Physicist')   # start declaring a new class
 s.setParent('Scientist')           # set parent for the class currently being declared
 s.endScope()
@@ -57,10 +61,11 @@ einstein = Timeline('einstein', physicist.addCall({
 einstein.getSignature()
 ```
 
+### Function Calls
 You could also use onCall to create more advanced type checks (at the time of function call rather than declaration).
 For example, imagine we had the following code:
 
-```
+```python
 def qux(d:Number):
     pass
 
@@ -76,7 +81,7 @@ baz(1, 2)
 For correct `qux` call we want to ensure that `a` is a `Number` at the time of the function call, not at the time of its declaration. We
 can easily accomplish such a check by populating our state in correct order:
 
-```
+```python
 s.newScope('function', 'qux', {
     inputs: ['Number'],
     returns: []
