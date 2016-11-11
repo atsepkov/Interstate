@@ -16,7 +16,7 @@
     "postversion": "npm publish",
     "build-self": "rapydscript src/interstate.pyj -o lib/interstate.js"
   },
-  "version": "0.0.6",
+  "version": "0.0.7",
   "license": "BSD-2-Clause",
   "engines": {
     "node": ">=0.12.0"
