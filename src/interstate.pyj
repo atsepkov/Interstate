@@ -32,7 +32,9 @@ def normalize(arg):
     # normalizes the passed in argument into a compatible variable type
     if type(arg) is 'String':
         return { type: arg }        # variable or function with unknown signature
-    elif type(arg) is 'Object' and arg.type:
+    elif type(arg) is 'Object':
+        if not arg.type:
+            arg.type = '?'
         if arg.inputs:
             # convert each argument
             arg.inputs = [normalize(x) for x in arg.inputs]
@@ -244,17 +246,20 @@ class Timeline:
                 callable = True
                 if expectedSignature.inputs:
                     # compare input types against expected types
-                    if expectedSignature.inputs.length >= inputs.inputs.length: # fewer inputs = ok, more inputs = no
-                        for index, timeline in enumerate(inputs.inputs):
-                            if self.enforced:
-                                if not timeline.canUseFor(expectedSignature.inputs[index]):
-                                    break
-                            else:
-                                if not timeline.canUseFor(expectedSignature.inputs[index]):
-                                    break
-                            if index is inputs.inputs.length - 1:
-                                matches = True
-                                found = True
+                    argMisalignment = inputs.inputs.length - expectedSignature.inputs.length
+                    if argMisalignment > 0 or argMisalignment < 0 and not expectedSignature.inputs[inputs.inputs.length].default:
+                        # signature has to match number of arguments unless the missing arguments are optional
+                        break
+                    for index, timeline in enumerate(inputs.inputs):
+                        if self.enforced:
+                            if not timeline.canUseFor(expectedSignature.inputs[index]):
+                                break
+                        else:
+                            if not timeline.canUseFor(expectedSignature.inputs[index]):
+                                break
+                        if index is inputs.inputs.length - 1:
+                            matches = True
+                            found = True
                 else:
                     # no point in continuing, vague function definition means every call signature is allowed
                     found = True
@@ -343,7 +348,7 @@ class Timeline:
         for possibleType in vars:
             # inheritance resolution
             while possibleType:
-                if possibleType.type is expectedType.type:
+                if possibleType.type is expectedType.type or expectedType.type is '?':
                     return True
                 possibleType = possibleType.parent
         return False
@@ -434,16 +439,28 @@ class State:
                     ", actual return types observed: " + ([stringifySignature(x) for x in top.seenReturns].join(' or ') or 'Undefined')
                 )
             if top.name:
+                # if function doesn't have a name, we can't reference it later
                 if top.annotation:
                     # annotation is specified, use exactly that
-                    timeline = self.scopes[-1].functions[top.name] = Timeline(top.name, top.annotation)
+                    inputs = []
+                    for index, element in enumerate(top.annotation.inputs):
+                        inputs.push(Object.assign({
+                            name: top.args[index].name,
+                            default: top.args[index].default
+                        }, element))
+                    declaration = {
+                        type: 'Function',
+                        inputs: inputs,
+                        returns: top.annotation.returns
+                    }
                 else:
                     # no annotation is specified, use the signature we observed
-                    timeline = self.scopes[-1].functions[top.name] = Timeline(top.name, {
-                        # TODO: count arguments being passed
+                    declaration = {
                         type: 'Function',
                         returns: top.seenReturns
-                    })
+                    }
+                    if top.args: declaration.inputs = top.args
+                timeline = self.scopes[-1].functions[top.name] = Timeline(top.name, declaration)
         elif top.type is 'class':
             # we're returning a class, which is effectively a function that generates the variable of the type
             # defined by class name
@@ -511,6 +528,7 @@ class State:
         scope = self.scopes[self.functionScope]
         # TODO: change to existential operator
         if scope.annotation and scope.annotation.inputs and scope.annotation.inputs.length is not args.length:
+            # shouldn't really happen unless there is a bug in the compiler itself
             raise Error("Specified arguments don't line up with function annotation.")
         defaultStarted = False
         for arg in args:

@@ -119,6 +119,7 @@ def setupBar():
         inputs: ['Number'],
         returns: ['String', 'Number']           # state won't be happy until it observes BOTH of these in return statements
     })
+    s.setArgs([{ name: 'z' }])
 setupBar()
 assert.throws(
     def():                                      # trying to add an incompatible return to the scope will raise an error
@@ -227,15 +228,32 @@ assert.throws(
 )
 s.setArgs([{ name: 'a' }, { name: 'b' }, { name: 'c', default: 'test' }])
 s.endScope()
-
-#assert.throws(
-#    def():
-#        s.addCall('bar1', {
-#            inputs: [num, num]
-#        })
-#    ,
-#    /NOT YET READY/
-#)
+# extra args not allowed
+assert.throws(
+    def():
+        s.addCall('bar1', {
+            inputs: [num, num, num, num]
+        })
+    ,
+    /allowed signatures/
+)
+# nor missing args
+assert.throws(
+    def():
+        s.addCall('bar1', {
+            inputs: [num]
+        })
+    ,
+    /allowed signatures/
+)
+# unless they're optional
+s.addCall('bar1', {
+    inputs: [num, num]
+})
+# normal call allowed
+s.addCall('bar1', {
+    inputs: [num, num, num]
+})
 
 # now let's create a situation where at the time of declaration the signature for a variable is invalid, but at the time of a call it is
 '''
@@ -254,12 +272,14 @@ s.newScope('function', 'qux', {
     inputs: ['Number'],
     returns: []
 })
+s.setArgs([{ name: 'd' }])
 s.endScope()
 s.setVar('a', 'String')
 s.newScope('function', 'baz', {
     inputs: ['Number', 'Number'],
     returns: ['Number']
 })
+s.setArgs([{ name: 'b' }, { name: 'c' }])
 # direct call fails
 assert.throws(
     def():

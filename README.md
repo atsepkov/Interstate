@@ -1,6 +1,13 @@
 # Interstate
-![Interstate Logo](http://res.cloudinary.com/atsepkov/raw/upload/v1478544146/interstate_logo.png)
-Compiler state manager (originally written for RapydScript). This state manager is currently designed for RapydScript, and can be used by compilers and linters alike. It's a more powerful context-tracker for the state of variable declarations and assignments. It is to a parser what acceleration is to velocity, effectively a derivative:
+![Interstate Logo](http://res.cloudinary.com/atsepkov/raw/upload/v1478544146/interstate_logo.png)  
+Compiler state manager (originally written for RapydScript). This state manager is currently designed for RapydScript, and can be used by compilers and linters alike. It's a much more powerful context-tracker for the state of variable declarations and assignments than RapydScript's original context tracking system. The main motivation for this project was to allow RapydScript to match and exceed the power of TypeScript. Interstate can one-up TypeScript's system for the following reasons:
+
+- Interstate thinks in probabilities rather than exact types, allowing more granular control to developers in terms of inputs.
+- Interstate is designed for a cleaner subset of JavaScript (RapydScript) and hence can be more aggressive about its assumptions.
+- Interstate embraces Pythonic patterns of failing early rather than lax JavaScript patterns TypeScript has to respect.
+- Interstate declutters the language rather than adding more clutter/syntax to it like TypeScript with its C# keywords.
+
+Interstate is to a parser what acceleration is to velocity, effectively a derivative:
 
 | Compiler | Geography | Math |
 |----------|-----------|------|
