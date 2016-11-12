@@ -53,7 +53,8 @@ def stringifySignature(varType):
             returns = [stringifySignature(arg) for arg in element.returns].join(' or ')
             signature += ' -> ' + (element.returns.length > 1 ? '(' + returns + ')' : returns or 'Undefined')
         return signature
-    return element.type
+    elementType = element.type or '?'
+    return element.name ? element.name + ':' + elementType : elementType
 
 
 '''
@@ -353,10 +354,7 @@ class Timeline:
             raise Error("'" + alias + "' is not a callable object")
         elif not found:
             # no valid signature found for this function call
-            stringifyTimeline = def(timeline):
-                sig = timeline.getSignature()
-                return [stringifySignature(x) for x in sig].join(' or ')
-            callSignature = [stringifyTimeline(elem) for elem in inputs.inputs].join(', ')
+            callSignature = [elem.stringify() for elem in inputs.inputs].join(', ')
 #            allowedFunctions = [[stringifySignature(input) for input in elem.inputs].join(', ') for elem in signatureList if elem.type is 'Function'].join(' or ')
             allowedFunctions = [stringifySignature(elem) for elem in signatureList if elem.type is 'Function'].join(' or ')
             raise Error("Can't call function " + alias + " with signature 'Function(" + callSignature + ")', allowed signatures: " + allowedFunctions)
@@ -379,15 +377,10 @@ class Timeline:
             # return everything this variable has been at one time or another if it's not strict
             # TODO: replace this N^2 operation with a Set in ES6
             return self.timeline
-#            return self.timeline.reduce(def(elements, element):
-#                for varType in self.timeline:
-#                    exists = False
-#                    if varType == element:
-#                        exists = True
-#                    if not exists:
-#                        elements.push(element)
-#                return elements
-#            , [])
+
+    def stringify(self):
+        sig = self.getSignature()
+        return [stringifySignature(x) for x in sig].join(' or ')
 
     def getProperty(self, *props):
         # takes a chained list of properties and returns the relevant timeline
@@ -522,6 +515,23 @@ class State:
                         returns: top.seenReturns
                     }
                     if top.args: declaration.inputs = top.args
+
+                # sanity check to make sure we're not bastardizing polymorphism
+                existingTimeline = self.getTimeline(top.name)
+                if existingTimeline and declaration.inputs:
+                    canUse = True
+                    for function in existingTimeline.getSignature():
+                        if function.type is 'Function':
+                            for index, arg in enumerate(function.inputs):
+                                if arg.name is not declaration.inputs[index].name or arg.type is not declaration.inputs[index].type:
+                                    self.warning(
+                                        "Redefining earlier declaration of " + top.name + "() with incompatbile signature: " +
+                                        stringifySignature(declaration) + ", allowed signatures: " + existingTimeline.stringify()
+                                    )
+                                    canUse = False
+                                    break
+                        if not canUse: break
+
                 timeline = self.scopes[-1].functions[top.name] = Timeline(top.name, declaration)
         elif top.type is 'class':
             # we're returning a class, which is effectively a function that generates the variable of the type
@@ -589,13 +599,16 @@ class State:
         '''
         scope = self.scopes[self.functionScope]
         # TODO: change to existential operator
+        if scope.args:
+            # shouldn't really happen unless there is a bug in the compiler itself
+            raise Error("Redeclaration of arguments for " + self.name + "() is not allowed.")
         if scope.annotation and scope.annotation.inputs and scope.annotation.inputs.length is not args.length:
             # shouldn't really happen unless there is a bug in the compiler itself
             raise Error("Specified arguments don't line up with function annotation.")
         defaultStarted = False
         for arg in args:
             if not arg.name:
-                raise Error("Invalid format for args, required format is an array of { name: 'string', ?default: ... }")
+                raise Error("Invalid format for args in " + self.name + "() declaration, required format is an array of { name: 'string', ?default: ... }")
             if arg.default:
                 defaultStarted = True
             else:
@@ -709,3 +722,20 @@ class State:
             else:
                 index -= 1
         return timeline
+
+    # ----- ERROR HANDLERS ------
+    def onWarning(self, callback):
+        self._warning = callback
+
+    def warning(self, message):
+        if self._warning:
+            self._warning(message)
+
+    def onError(self, callback):
+        self._error = callback
+
+    def error(self, message):
+        if self._error:
+            self._error(message)
+        else:
+            raise Error(message)

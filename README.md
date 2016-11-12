@@ -26,6 +26,7 @@ Features of Interstate:
 - Enforces proper returns for function calls
 - Allows enforcing a specific subset of permitted types for each variable
 - Resolves return signatures for function calls at compile time
+- Dead-code elimination
 
 ## Install
 
