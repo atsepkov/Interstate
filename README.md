@@ -158,3 +158,55 @@ s.alignInputs('bar', [
 	{ name: 'b', data: 3 }
 ])
 ```
+
+### Shadowing and Scope Control
+The following setup will force the exact same scoping rules as used by RapydScript:
+
+```python
+s.newScope('function')
+s.setVar('hello', 'String', ['String'])         # in this scope hello can only be string
+assert.throws(
+    def():                                      # number assignment will fail
+        s.setVar('hello', 'Number')
+    ,
+    /Can't assign value of type/
+)
+assert.throws(
+    def():                                      # can't relax earlier declaration either
+        s.setVar('hello', 'Number', ['Number', 'String'])
+    ,
+    /conflicts with earlier format/
+)
+s.setVar('hello', 'String')                     # reassignment of same type allowed
+# -- nested scope
+s.newScope('function')
+s.setVar('hello', 'Number')                     # assignment allowed (shadowed variable)
+s.endScope()
+# -- end nested scope
+assert.throws(
+    def():                                      # number assignment still fails (shadowing over)
+        s.setVar('hello', 'Number')
+    ,
+    /Can't assign value of type/
+)
+# -- nested scope #2
+s.newScope('function')
+s.markNonLocal('hello')                         # this time we disable shadowing
+assert.throws(
+    def():                                      # number assignment now fails even in nested scope
+        s.setVar('hello', 'Number')
+    ,
+    /Can't assign value of type/
+)
+s.endScope()
+# -- end nested scope
+# -- nested scope #3
+s.newScope('function')
+assert(s.getTimeline('hello').getSignature() == [{type: 'String'}]) # no assignment this time, hence we reference outer scope
+s.endScope()
+# -- end nested scope
+s.endScope()
+```
+
+Note that you aren't restricted to the same scoping rules as RapydScript for your language/compiler if you decide to use Interstate to
+power it. Simply passing `local=False` to `scope.setVar()` will have the scope behave the same way as regular JavaScript.

@@ -640,10 +640,10 @@ class State:
     def markNonLocal(self, name):
         self.scopes[self.functionScope].nonlocal[name] = True
 
-    def setVar(self, name, varType, enforced=None):
+    def setVar(self, name, varType, enforced=None, local=True):
         # updates the variable in relevant scope
         # NOTE: if array is passed in, assume a conditional variable type
-        timeline = self.getTimeline(name, True)
+        timeline = self.getTimeline(name, local)
         if timeline:
             if enforced:
                 # make sure no type violations in enforcement
