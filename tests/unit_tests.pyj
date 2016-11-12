@@ -15,7 +15,7 @@ Basic Timeline Tests:
 lax = Timeline('foo', 'Number') # initialize to Number
 assert(lax.canAlwaysUseFor('Number'))           # allowed
 
-lax.setVar('String')            # assign String to var (no error)
+lax.setVar('String')                            # assign String to var (no error)
 assert(lax.canUseFor('Number'))                 # allowed
 assert(lax.canUseFor('String'))                 # allowed
 assert(not lax.canUseFor('Boolean'))            # not allowed
@@ -169,7 +169,8 @@ assert(strict1.addCall({                        # allowed call results in correc
     type: 'String'
 }])
 
-# classes
+
+# CLASSES
 s.newScope('class', 'Human')                    # start a new class
 s.setParent('Animalia')                         # inherit from an unknown class, ok because it could come from external libs
 s.endScope()                                    # finish class declaration
@@ -212,6 +213,54 @@ assert(tom.canUseFor('Human'))                  # parent - yes
 assert(not tom.canAlwaysUseFor('Human'))        # no, ambiguity between Human and Number
 assert(einstein.canAlwaysUseFor('Animalia'))    # grandparent - yes
 
+
+# SHADOWING AND SCOPE CONTROL
+s.newScope('function')
+s.setVar('hello', 'String', ['String'])         # in this scope hello can only be string
+assert.throws(
+    def():                                      # number assignment will fail
+        s.setVar('hello', 'Number')
+    ,
+    /Can't assign value of type/
+)
+assert.throws(
+    def():                                      # can't relax earlier declaration either
+        s.setVar('hello', 'Number', ['Number', 'String'])
+    ,
+    /conflicts with earlier format/
+)
+s.setVar('hello', 'String')                     # reassignment of same type allowed
+# -- nested scope
+s.newScope('function')
+s.setVar('hello', 'Number')                     # assignment allowed (shadowed variable)
+s.endScope()
+# -- end nested scope
+assert.throws(
+    def():                                      # number assignment still fails (shadowing over)
+        s.setVar('hello', 'Number')
+    ,
+    /Can't assign value of type/
+)
+# -- nested scope #2
+s.newScope('function')
+s.markNonLocal('hello')                         # this time we disable shadowing
+assert.throws(
+    def():                                      # number assignment now fails even in nested scope
+        s.setVar('hello', 'Number')
+    ,
+    /Can't assign value of type/
+)
+s.endScope()
+# -- end nested scope
+# -- nested scope #3
+s.newScope('function')
+assert(s.getTimeline('hello').getSignature() == [{type: 'String'}]) # no assignment this time, hence we reference outer scope
+s.endScope()
+# -- end nested scope
+s.endScope()
+
+
+# FUNCTION CALLS
 # now test function input signature
 s.newScope('function', 'bar1')
 

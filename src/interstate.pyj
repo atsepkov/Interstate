@@ -637,17 +637,28 @@ class State:
         # returns true if this timeline can be used to satisfy function signature requiring varType
         return self.getTimeline(name).canAlwaysUseFor(varType)
 
-    def setVar(self, name, varType):
+    def markNonLocal(self, name):
+        self.scopes[self.functionScope].nonlocal[name] = True
+
+    def setVar(self, name, varType, enforced=None):
         # updates the variable in relevant scope
         # NOTE: if array is passed in, assume a conditional variable type
-        timeline = self.getTimeline(name)
+        timeline = self.getTimeline(name, True)
         if timeline:
+            if enforced:
+                # make sure no type violations in enforcement
+                for var in enforced:
+                    if not timeline.canUseFor(var):
+                        self.error(
+                            "Variable redeclaration (" + [stringifySignature(var) for var in enforced].join(' or ') +
+                            ") for '" + name + "' conflicts with earlier format: " + timeline.stringify()
+                        )
             # update of existing variable
             timeline.setVar(varType)
         else:
             # new declaration
             # make sure to assign to top-most class or function scope
-            self.scopes[Math.max(0, self.classScope, self.functionScope)].vars[name] = Timeline(name, varType)
+            self.scopes[Math.max(0, self.classScope, self.functionScope)].vars[name] = Timeline(name, varType, enforced)
 
         if self.states:
             if name in self.states[-1]:
@@ -719,8 +730,9 @@ class State:
                 type: '?'
             }]
 
-    def getTimeline(self, name):
+    def getTimeline(self, name, local=False):
         # obtains the underlying timeline for more direct manipulation
+        # stayLocal will stay local unless the variable is already flagged as nonlocal
         timeline = None
         index = self.scopes.length - 1
         while not timeline and index >= 0:
@@ -730,10 +742,11 @@ class State:
                 timeline = self.scopes[index].functions[name]
             elif name in self.scopes[index].classes:
                 timeline = self.scopes[index].classes[name]
-#            elif name in self.scopes[index].nonlocal:
-#                index -= 1
-            else:
+            elif not local or self.functionScope > 0 and name in self.scopes[self.functionScope].nonlocal:
                 index -= 1
+            else:
+                # local is set, don't traverse outer scopes
+                break
         return timeline
 
     # ----- ERROR HANDLERS ------
