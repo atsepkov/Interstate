@@ -18,6 +18,8 @@
 
 
 # ------- UTILITY FUNCTIONS ----------
+_warning = None
+_error = None
 
 # sorting helper
 def byType(a, b):
@@ -28,7 +30,7 @@ def byType(a, b):
 
 def normalize(arg):
     if not arg:
-        raise Error("No argument specified")
+        self.error("No argument specified")
     # normalizes the passed in argument into a compatible variable type
     if type(arg) is 'String':
         return { type: arg }        # variable or function with unknown signature
@@ -42,7 +44,7 @@ def normalize(arg):
             # each return statement signature (there could be more than one return type if there are multiple return statements)
             arg.returns = [normalize(x) for x in arg.returns].sort(byType)
         return arg                  # function with known signature
-    raise Error('Unexpected type passed into variable declaration: ' + type(arg) + ', expected types: String or Object')
+    self.error('Unexpected type passed into variable declaration: ' + type(arg) + ', expected types: String or Object')
 
 def stringifySignature(varType):
     # convert element signature to printable version
@@ -108,7 +110,7 @@ class Var:
 #                # each return statement signature (there could be more than one return type if there are multiple return statements)
 #                arg.returns = [Var.normalize(x) for x in arg.returns]
 #            return arg                  # function with known signature
-#        raise Error('Unknown argument type passed into variable declaration')
+#        self.error('Unknown argument type passed into variable declaration')
 
 class Func(Var):
     '''
@@ -125,7 +127,7 @@ class Func(Var):
                     return Var(arg)     # variable
             elif type(arg) is 'Object':
                 return Func(arg)        # function with known signature
-            raise Error('Unknown argument type passed into function declaration')
+            self.error('Unknown argument type passed into function declaration')
         )
         self.returns = returns
 
@@ -207,7 +209,7 @@ class Timeline:
             if not found:
                 # handle unexpected type assignment
                 expectedTypes = [stringifySignature(elem) for elem in self.enforced].join(' or ')
-                raise Error("Can't assign value of type " + stringifySignature(variable) + " to '" + self.name + "', allowed type: " + expectedTypes)
+                self.error("Can't assign value of type " + stringifySignature(variable) + " to '" + self.name + "', allowed type: " + expectedTypes)
         else:
             # lax variable settings, just push it to the list, but only if it's unique
             # TODO: change to sets in ES6
@@ -263,7 +265,7 @@ class Timeline:
                     namesStarted = False
                     for idx, input in enumerate(inputs):
                         if namesStarted and not input.name:
-                            raise Error("Non-keyword argument after keyword argument in function call to " + self.name + "().")
+                            self.error("Non-keyword argument after keyword argument in function call to " + self.name + "().")
                         if input.name:
                             # named arguments started, resolve position
                             namesStarted = True
@@ -273,7 +275,7 @@ class Timeline:
                                 failed = True
                                 break # not the right signature, don't error yet because there may be a right one later
                             elif outputs[index]:
-                                raise Error("" + self.name + "() got multiple values for keyword argument '" + input.name + "'")
+                                self.error("" + self.name + "() got multiple values for keyword argument '" + input.name + "'")
                             else:
                                 # inject named argument into correct position
                                 outputs[index] = input
@@ -351,13 +353,13 @@ class Timeline:
                     break
 
         if not callable:
-            raise Error("'" + alias + "' is not a callable object")
+            self.error("'" + alias + "' is not a callable object")
         elif not found:
             # no valid signature found for this function call
             callSignature = [elem.stringify() for elem in inputs.inputs].join(', ')
 #            allowedFunctions = [[stringifySignature(input) for input in elem.inputs].join(', ') for elem in signatureList if elem.type is 'Function'].join(' or ')
             allowedFunctions = [stringifySignature(elem) for elem in signatureList if elem.type is 'Function'].join(' or ')
-            raise Error("Can't call function " + alias + " with signature 'Function(" + callSignature + ")', allowed signatures: " + allowedFunctions)
+            self.error("Can't call function " + alias + " with signature 'Function(" + callSignature + ")', allowed signatures: " + allowedFunctions)
 
         for command in self.delayedLogic['call']:
             command(inputs)
@@ -424,6 +426,17 @@ class Timeline:
         for function in self.delayedLogic:
             function()
 
+    # ----- ERROR HANDLERS ------
+    def warning(self, message):
+        if _warning:
+            _warning(message)
+
+    def error(self, message):
+        if _error:
+            _error(message)
+        else:
+            raise Error(message)
+
 
 class State:
     def __init__(self):
@@ -488,7 +501,7 @@ class State:
 
         if top.type is 'function':
             if top.annotation and top.annotation.returns and top.annotation.returns != top.seenReturns:
-                raise Error(
+                self.error(
                     "Annotation states that function returns " +
                     [stringifySignature(x) for x in top.annotation.returns].join(' or ') +
                     ", actual return types observed: " + ([stringifySignature(x) for x in top.seenReturns].join(' or ') or 'Undefined')
@@ -601,19 +614,19 @@ class State:
         # TODO: change to existential operator
         if scope.args:
             # shouldn't really happen unless there is a bug in the compiler itself
-            raise Error("Redeclaration of arguments for " + self.name + "() is not allowed.")
+            self.error("Redeclaration of arguments for " + self.name + "() is not allowed.")
         if scope.annotation and scope.annotation.inputs and scope.annotation.inputs.length is not args.length:
             # shouldn't really happen unless there is a bug in the compiler itself
-            raise Error("Specified arguments don't line up with function annotation.")
+            self.error("Specified arguments don't line up with function annotation.")
         defaultStarted = False
         for arg in args:
             if not arg.name:
-                raise Error("Invalid format for args in " + self.name + "() declaration, required format is an array of { name: 'string', ?default: ... }")
+                self.error("Invalid format for args in " + self.name + "() declaration, required format is an array of { name: 'string', ?default: ... }")
             if arg.default:
                 defaultStarted = True
             else:
                 # raise an error when seeing something like 'def func(a=5, b)'
-                if defaultStarted: raise Error("Missing default value for argument '" + arg.name + "' of function '" + scope.name + "'. Arguments with default values must come last in function declaration.")
+                if defaultStarted: self.error("Missing default value for argument '" + arg.name + "' of function '" + scope.name + "'. Arguments with default values must come last in function declaration.")
         scope.args = args
 
     def canUseFor(self, name, varType):
@@ -655,7 +668,7 @@ class State:
                             return  # duplicate
                     scope.seenReturns.push(actual)
                     return  # this is a valid return, we're all set with our safety check
-            raise Error(
+            self.error(
                 "Annotation states that function returns " +
                 [stringifySignature(x) for x in scope.annotation.returns].join(' or ') +
                 ", actual return type: " + stringifySignature(actual)
@@ -725,17 +738,19 @@ class State:
 
     # ----- ERROR HANDLERS ------
     def onWarning(self, callback):
-        self._warning = callback
+        nonlocal _warning
+        _warning = callback
 
     def warning(self, message):
-        if self._warning:
-            self._warning(message)
+        if _warning:
+            _warning(message)
 
     def onError(self, callback):
-        self._error = callback
+        nonlocal _error
+        _error = callback
 
     def error(self, message):
-        if self._error:
-            self._error(message)
+        if _error:
+            _error(message)
         else:
             raise Error(message)
