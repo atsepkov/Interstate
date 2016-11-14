@@ -99,8 +99,12 @@ s = State()                                     # initialize the global state
 
 # lax scope
 s.newScope('function', 'foo')                   # start declaration of a new function named 'foo'
+s.newScope('if')
 s.setReturn('RegExp')                           # add a return of type RegExp to current scope
+s.nextScopeStage()
 s.setReturn('String')                           # add a return of type String to current scope
+s.endScope()                                    # pop the scope, ending conditional
+# undefined should get added too, because this wasn't a conditional that had a final scope
 s.endScope()                                    # pop the scope, in turn generating a 'foo' function in parent scope
 lax1 = s.getTimeline('foo')                     # retrieve the timeline of a 'foo' object, which maps to the function we declared
 boolean = Timeline('boolean', 'Boolean')
@@ -111,6 +115,8 @@ assert(lax1.addCall({                           # allowed because our function d
     type: 'RegExp'
 }, {
     type: 'String'
+}, {
+    type: 'Undefined'
 }])                                             # the possible outputs match up with what we declared while generating the scope
 
 # strict scope
@@ -133,9 +139,22 @@ assert.throws(
     ,
     /Annotation states that function returns/
 )
+
 setupBar()                                      # rerun setup because previous assert broke our scope
+s.newScope('if')
 s.setReturn('Number')                           # number is allowed
+s.nextScopeStage()
 s.setReturn('Number')                           # multiple returns of same type are allowed
+assert.throws(
+    def():                                      # error, didn't close that conditional, resulting in possibility of Undefined return
+        s.endScope()
+    ,
+    /Annotation states that function returns/
+)
+
+# try again with only the Number return
+setupBar()
+s.setReturn('Number')
 assert.throws(
     def():                                      # error, still missing String return
         s.endScope()
@@ -145,8 +164,11 @@ assert.throws(
 
 # try again, this time it should work
 setupBar()
+s.newScope('if')
 s.setReturn('Number')
+s.nextScopeStage(True)                          # declare the stage as final to eliminate Undefined return possibility
 s.setReturn('String')
+s.endScope()
 s.endScope()
 
 # now let's try to get that timeline and use it

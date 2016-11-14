@@ -28,6 +28,19 @@ def byType(a, b):
     if a.type > b.type: return 1
     return 0
 
+def mergeArrays(originalArray, newArray):
+    # merging function for two arrays that eliminates duplicates
+    for newItem in newArray:
+        exists = False
+        for originalItem in originalArray:
+            if newItem == originalItem:
+                exists = True
+                break
+            if exists: break
+        if not exists:
+            originalArray.push(newItem)
+    return originalArray
+
 def normalize(arg):
     if not arg:
         self.error("No argument specified")
@@ -216,6 +229,22 @@ class Timeline:
             for existing in self.timeline:
                 if variable == existing: return
             self.timeline.push(variable)
+
+    def setSignature(self, signature):
+        # replaces existing signature with new one, used when closing a conditional or performing reassignment in same scope
+        if self.enforced:
+            for newVar in signature:
+                found = False
+                variable = normalize(newVar)
+                for origVar in self.enforced:
+                    if origVar == variable:
+                        found = True
+                        break
+                if not found:
+                    # handle unexpected type assignment
+                    expectedTypes = [stringifySignature(elem) for elem in self.enforced].join(' or ')
+                    self.error("Can't assign value of type " + stringifySignature(variable) + " to '" + self.name + "', allowed type: " + expectedTypes)
+        self.timeline = signature
 
     def setProperty(self, prop, arg):
         # sets property of this variable to a given type, since we can't really tell which type this property refers to, we'll assign it
@@ -467,16 +496,18 @@ class State:
                 annotation.type = 'Function'
                 scope.annotation = normalize(annotation)
             scope.seenReturns = []
+            scope.returned = False  # set to true after the scope has returned, useful for catching dead code
             self.functionScope = self.scopes.length - 1
         elif scopeType in ['if', 'switch', 'try']:
             scope = self.scopes[-1]
-            scope.states = [{}]     # each state will append a hash here, which will store variables that got set in that state
-            scope.final = False     # once scope reaches its final state, this will be changed to true
+            scope.stages = [{}]     # each stage will append a hash here, which will store variables that got set in that stage
+            scope.final = False     # once scope reaches its final stage, this will be changed to true
 
-    def nextScopeState(final=False):
-        # transitions through scope states (i.e. if/else, try/catch)
-        # final implies that this state will always be the last state (i.e. else rather than elif, default case for switch)
+    def nextScopeStage(self, final=False):
+        # transitions through scope stages (i.e. if/else, try/catch)
+        # final implies that this stage will always be the last stage (i.e. else rather than elif, default case for switch)
         scope = self.scopes[-1]
+        scope.stages.push({})
         scope.final = final
 
     def endScope(self):
@@ -559,21 +590,101 @@ class State:
                     parent: top.parent and top.parent.returns ? top.parent.returns[0] : None
                 }]
             })
-        elif top.states and top.final:
-            # for every variable that appears in all scopes and has final scope, we replace existing timeline
-            # we also set this variable on parent's scope if parent is stateful in order to gracefully handle
-            # nested conditionals (we only need to worry about replace cases since add has already been handled)
-            for var in top.states[0]:
-                signature = [top.states[0][var]]
-                for state in top.states[1:]:
-                    if var in state:
-                        signature.concat(var)
+        elif top.stages:
+            '''
+            constructs that will satisfy this and replace the timeline
+                if ...
+                elif ...
+                else ...
+
+                switch:
+                    case ...
+                    case ...
+                    default ...
+
+                try ...
+                except (if except captures ALL cases)
+
+            constructs that will not (if these constructs create a new variable, it can also have undefined state):
+                if ...
+                elif ...
+
+                switch:
+                    case ...
+                    case ...
+
+                while ...
+                for ...
+
+                try ...
+                except ...
+
+            constructs that will negate replacement of timeline:
+                try ...
+                except ...
+
+            (because uncaught error from a deeper scope can be caught by a raise here)
+            '''
+            # for every variable that appears in all stages and has final stage, we replace existing timeline
+            # we also set this variable on parent's scope if parent has stages in order to gracefully handle
+            # nested conditionals
+            for var in top.stages[0]:   # var value is a conditional (array)
+                signature = top.stages[0][var]
+                occursInAll = True
+                for stage in top.stages[1:]:
+                    if var in stage:
+                        # mergeArrays all assignments from this stage into the signature
+                        signature = mergeArrays(signature, top.stages[-1][var])
                     else:
-                        break
-                    if state is top.states[-1]:
-                        if self.scopes[-1].states:
-                            # TODO: do concat vs init, also make sure this is unique
-                            self.scopes[-1].states[var] = signature
+                        # no assignments happened in this stage
+                        occursInAll = False
+
+                functionScope = self.getScopeIndex('function')
+                classScope = self.getScopeIndex('class')
+                if occursInAll and top.final:
+                    # var assignment happened in all stages, replace signature
+                    if self.scopes[-1].stages:
+                        # if parent is stage-based as well (if/try/switch)
+                        self.scopes[-1].stages[var] = signature
+                    elif functionScope > classScope:
+                        if var is not 'return':
+                            self.onCall(def(input):
+                                # when this function gets called, overwrite signature
+                                self.getTimeline(var).setSignature(signature)
+                            , 'function')
+                    else:
+                        if var is 'return':
+                            self.error("Return outside a function.")
+                        # not in a function
+                        self.getTimeline(var).setSignature(signature)
+                else:
+                    if self.scopes[-1].stages:
+                        # if parent is stage-based as well (if/try/switch)
+                        if self.scopes[-1].stages[-1][var]:
+                            # something was set previously, it will serve as the fallback
+                            self.scopes[-1].stages[-1][var] = mergeArrays(self.scopes[-1].stages[-1][var], signature)
+                        else:
+                            # nothing was set previously, undefined value possible
+                            self.scopes[-1].stages[-1][var] = mergeArrays(signature, [normalize('Undefined')])
+                    elif functionScope > classScope:
+                        if var is 'return':
+                            # undefined return is now possible
+                            self.setReturn('Undefined')
+#                            functionScope.seenReturns = mergeArrays(functionScope.seenReturns, [normalize('Undefined')])
+                        else:
+                            self.onCall(def(input):
+                                # when this function gets called, overwrite signature
+                                timeline = self.getTimeline(var)
+                                for element in signature:
+                                    timeline.setVar(element)
+                            , 'function')
+                    else:
+                        # not in a function
+                        if var is 'return':
+                            self.error("Return outside a function.")
+                        for element in signature:
+                            timeline.setVar(element)
+
         # NOTE: we do not handle imports here due to the number of available import systems, I may add some logic for it
         # in the future, or let the user handle it manually, they should be able to since they have access to the entire
         # popped scope object
@@ -638,11 +749,22 @@ class State:
         return self.getTimeline(name).canAlwaysUseFor(varType)
 
     def markNonLocal(self, name):
-        self.scopes[self.functionScope].nonlocal[name] = True
+        scope = self.scopes[self.getScopeIndex('function')]
+        if scope.returned:
+            self.error("Dead code after return statement.")
+        scope.nonlocal[name] = True
 
     def setVar(self, name, varType, enforced=None, local=True):
         # updates the variable in relevant scope
         # NOTE: if array is passed in, assume a conditional variable type
+
+        # first check if we're inside a staged scope, if so update the stage rather than the variable itself
+        scope = self.scopes[-1]
+
+        functionScope = self.getScopeIndex('function')
+        if functionScope.returned or scope.stages and scope.stages[-1]['return']:
+            self.error("Dead code after return statement.")
+
         timeline = self.getTimeline(name, local)
         if timeline:
             if enforced:
@@ -653,59 +775,86 @@ class State:
                             "Variable redeclaration (" + [stringifySignature(var) for var in enforced].join(' or ') +
                             ") for '" + name + "' conflicts with earlier format: " + timeline.stringify()
                         )
-            # update of existing variable
-            timeline.setVar(varType)
+            # update of existing variable, except if we're in a sub-scope
+            if not scope.stages:
+                timeline.setVar(varType)
         else:
             # new declaration
             # make sure to assign to top-most class or function scope
-            self.scopes[Math.max(0, self.classScope, self.functionScope)].vars[name] = Timeline(name, varType, enforced)
-
-        if self.states:
-            if name in self.states[-1]:
-                self.states[-1][name].push(normalize(varType))
+            vars = self.scopes[Math.max(0, self.classScope, self.functionScope)].vars
+            if scope.stages:
+                vars[name] = Timeline(name, 'Undefined', enforced)
             else:
-                self.states[-1][name] = [normalize(varType)]
+                vars[name] = Timeline(name, varType, enforced)
+
+        if scope.stages:
+            if name in scope.stages[-1]:
+                scope.stages[-1][name].push(normalize(varType))
+            else:
+                scope.stages[-1][name] = [normalize(varType)]
 
     def setReturn(self, varType):
         # document a return for current scope
         actual = normalize(varType)
-        scope = self.scopes[self.functionScope]
-        if scope.annotation and scope.annotation.returns:
-            for expected in scope.annotation.returns:
+        functionScopeIndex = self.getScopeIndex('function')
+        functionScope = self.scopes[functionScopeIndex]
+        classScopeIndex = self.getScopeIndex('class')
+        scope = self.scopes[-1]
+
+        if functionScope.returned or scope.stages and scope.stages[-1]['return']:
+            self.error("Dead code after return statement.")
+
+        if scope.stages and functionScopeIndex > classScopeIndex:
+            scope.stages[-1]['return'] = True
+        elif scope.type is 'function':
+            scope.returned = True
+        else:
+            self.error("Return outside function.")
+
+        if functionScope.annotation and functionScope.annotation.returns:
+            # strict function definition
+            for expected in functionScope.annotation.returns:
                 if expected == actual:
-                    # TODO: replace with ES6 sets
-                    for seen in scope.seenReturns:
+                    for seen in functionScope.seenReturns:
                         if actual == seen:
                             return  # duplicate
-                    scope.seenReturns.push(actual)
+                    functionScope.seenReturns.push(actual)
                     return  # this is a valid return, we're all set with our safety check
             self.error(
                 "Annotation states that function returns " +
-                [stringifySignature(x) for x in scope.annotation.returns].join(' or ') +
+                [stringifySignature(x) for x in functionScope.annotation.returns].join(' or ') +
                 ", actual return type: " + stringifySignature(actual)
             )
         else:
             # annotation not specified, every return is valid, but let's document it just for sanity
             # TODO: replace with ES6 sets
-            for seen in scope.seenReturns:
+            for seen in functionScope.seenReturns:
                 if actual == seen:
                     return  # duplicate
-            scope.seenReturns.push(actual)
+            functionScope.seenReturns.push(actual)
 
     def addRef(self, name):
         # add variable use reference (in this case we don't care if it's a variable or a function call)
+
+        scope = self.scopes[-1]
+        functionScope = self.getScopeIndex('function')
+        if functionScope.returned or scope.stages and scope.stages[-1]['return']:
+            self.error("Dead code after return statement.")
+
         timeline = self.getTimeline(name)
         if timeline: timeline.addRef()
         # if it's not found, this could be a variable from outside library or global
         return timeline
 
-    def onEndScope(self, function):
+    def onEndScope(self, function, scopeType=None):
         # performs the function after current scope terminates, this is useful for handling self-references
         # within classes, like reference to self.staticMethod()
-        self.scopes[-1].delayed['endScope'].push(function)
+        index = scopeType ? self.getScopeIndex(scopeType) : self.scopes.length - 1
+        self.scopes[index].delayed['endScope'].push(function)
 
-    def onCall(self, function):
-        self.scopes[-1].delayed['call'].push(function)
+    def onCall(self, function, scopeType=None):
+        index = scopeType ? self.getScopeIndex(scopeType) : self.scopes.length - 1
+        self.scopes[index].delayed['call'].push(function)
 
     def alignInputs(self, name, inputs):
         timeline = self.getTimeline(name)
@@ -716,6 +865,12 @@ class State:
 
     def addCall(self, name, signature):
         # add function call, this time we check if the annotation matches
+
+        scope = self.scopes[-1]
+        functionScope = self.getScopeIndex('function')
+        if functionScope.returned or scope.stages and scope.stages[-1]['return']:
+            self.error("Dead code after return statement.")
+
         timeline = self.getTimeline(name)
         if timeline: timeline.addCall(signature)
         # if it's not found, this could be a function from outside library or global
@@ -748,6 +903,13 @@ class State:
                 # local is set, don't traverse outer scopes
                 break
         return timeline
+
+    def getScopeIndex(self, scopeType):
+        # gets top-most scope of a given type
+        for index, scope in enumerate(reversed(self.scopes)):
+            if scope.type is scopeType:
+                return self.scopes.length - index - 1
+        return -1
 
     # ----- ERROR HANDLERS ------
     def onWarning(self, callback):

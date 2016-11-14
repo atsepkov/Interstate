@@ -1,5 +1,6 @@
 (function(){
 "use strict";
+var ՐՏ_1, ՐՏ_2, ՐՏ_3, ՐՏ_4, ՐՏ_5;
 function enumerate(item) {
     var arr, iter, i;
     arr = [];
@@ -27,6 +28,11 @@ function ՐՏ_Iterable(iterable) {
     }
     return Object.keys(iterable);
 }
+function ՐՏ_print() {
+    if (typeof console === "object") {
+        console.log.apply(console, arguments);
+    }
+}
 function range(start, stop, step) {
     var length, idx, range;
     if (arguments.length <= 1) {
@@ -52,7 +58,7 @@ function ՐՏ_type(obj) {
     return obj && obj.constructor && obj.constructor.name ? obj.constructor.name : Object.prototype.toString.call(obj).slice(8, -1);
 }
 function ՐՏ_eq(a, b) {
-    var ՐՏitr49, ՐՏidx49;
+    var ՐՏitr50, ՐՏidx50;
     var i;
     if (a === b) {
         return true;
@@ -71,9 +77,9 @@ function ՐՏ_eq(a, b) {
             if (Object.keys(a).length !== Object.keys(b).length) {
                 return false;
             }
-            ՐՏitr49 = ՐՏ_Iterable(a);
-            for (ՐՏidx49 = 0; ՐՏidx49 < ՐՏitr49.length; ՐՏidx49++) {
-                i = ՐՏitr49[ՐՏidx49];
+            ՐՏitr50 = ՐՏ_Iterable(a);
+            for (ՐՏidx50 = 0; ՐՏidx50 < ՐՏitr50.length; ՐՏidx50++) {
+                i = ՐՏitr50[ՐՏidx50];
                 if (!ՐՏ_eq(a[i], b[i])) {
                     return false;
                 }
@@ -83,12 +89,11 @@ function ՐՏ_eq(a, b) {
     }
     return false;
 }
+var ՐՏ_modules = {};
+ՐՏ_modules["interstate"] = {};
 
 (function(){
-
-    var __name__ = "__main__";
-
-    var ՐՏ_1, ՐՏ_2, ՐՏ_3, ՐՏ_4, ՐՏ_5;
+    var __name__ = "interstate";
     var _warning, _error;
     _warning = null;
     _error = null;
@@ -914,7 +919,7 @@ function ՐՏ_eq(a, b) {
                         }
                         functionScope = self.getScopeIndex("function");
                         classScope = self.getScopeIndex("class");
-                        if (occursInAll && top.final) {
+                        if (occursInAll) {
                             if (self.scopes[self.scopes.length-1].stages) {
                                 self.scopes[self.scopes.length-1].stages[var_] = signature;
                             } else if (functionScope > classScope) {
@@ -1052,7 +1057,7 @@ function ՐՏ_eq(a, b) {
             value: function markNonLocal(name){
                 var self = this;
                 var scope;
-                scope = self.scopes[self.getScopeIndex("function")];
+                scope = self.getScopeIndex("function");
                 if (scope.returned) {
                     self.error("Dead code after return statement.");
                 }
@@ -1339,5 +1344,345 @@ function ՐՏ_eq(a, b) {
             }
         }
     }), ՐՏ_5);
+    ՐՏ_modules["interstate"]["_warning"] = _warning;
+
+    ՐՏ_modules["interstate"]["_error"] = _error;
+
+    ՐՏ_modules["interstate"]["byType"] = byType;
+
+    ՐՏ_modules["interstate"]["mergeArrays"] = mergeArrays;
+
+    ՐՏ_modules["interstate"]["normalize"] = normalize;
+
+    ՐՏ_modules["interstate"]["stringifySignature"] = stringifySignature;
+
+    ՐՏ_modules["interstate"]["Var"] = Var;
+
+    ՐՏ_modules["interstate"]["Func"] = Func;
+
+    ՐՏ_modules["interstate"]["Class"] = Class;
+
+    ՐՏ_modules["interstate"]["Timeline"] = Timeline;
+
+    ՐՏ_modules["interstate"]["State"] = State;
+})();
+
+(function(){
+
+    var __name__ = "__main__";
+
+    var ՐՏ_8, ՐՏ_9, ՐՏ_10, ՐՏ_11, ՐՏ_12, ՐՏ_13, ՐՏ_14, ՐՏ_15, ՐՏ_16, ՐՏ_17, ՐՏ_18, ՐՏ_19, ՐՏ_20, ՐՏ_21;
+    var assert, lax, num, nested, strict, s, lax1, boolean, strict1, string, jack, tom, einstein, input;
+    var State = ՐՏ_modules["interstate"].State;
+    var Timeline = ՐՏ_modules["interstate"].Timeline;
+    
+    assert = require("assert");
+    "\nBasic Timeline Tests:\n\n    These tests test the features of a timeline object in a vacuum, as if all\n    assignments and uses happen in the same scope. We're not yet concerned with\n    tracking this timeline through scopes.\n";
+    lax = new Timeline("foo", "Number");
+    assert(lax.canAlwaysUseFor("Number"));
+    lax.setVar("String");
+    assert(lax.canUseFor("Number"));
+    assert(lax.canUseFor("String"));
+    assert(!lax.canUseFor("Boolean"));
+    assert(!lax.canAlwaysUseFor("Number"));
+    num = new Timeline("num", "Number");
+    assert.throws(function() {
+        lax.addCall({
+            inputs: [ num ]
+        });
+    }, /not a callable object/);
+    lax.setVar({
+        type: "Function",
+        inputs: [ "Number" ],
+        returns: [ "Number" ]
+    });
+    assert(((ՐՏ_8 = lax.addCall({
+        inputs: [ num ]
+    })) === (ՐՏ_9 = [ {
+        type: "Number"
+    } ]) || typeof ՐՏ_8 === "object" && ՐՏ_eq(ՐՏ_8, ՐՏ_9)));
+    assert.throws(function() {
+        lax.addCall({
+            inputs: []
+        });
+    }, /allowed signatures/);
+    nested = new Timeline("baz", {
+        type: "Function",
+        inputs: [ "Number", "Number" ],
+        returns: [ "Beans", "Nuts" ]
+    });
+    assert.throws(function() {
+        lax.addCall({
+            inputs: [ nested ]
+        }, "biz");
+    }, /allowed signatures/);
+    lax.setVar({
+        type: "Function",
+        inputs: [ {
+            type: "Function",
+            inputs: [ "Number", "Number" ],
+            returns: [ "Beans", "Nuts" ]
+        } ],
+        returns: [ "Apples" ]
+    });
+    assert(((ՐՏ_10 = lax.addCall({
+        inputs: [ nested ]
+    }, "biz")) === (ՐՏ_11 = [ {
+        type: "Apples"
+    } ]) || typeof ՐՏ_10 === "object" && ՐՏ_eq(ՐՏ_10, ՐՏ_11)));
+    strict = new Timeline("foo", "Number", [ "Number", "Boolean" ]);
+    strict.setVar("Number");
+    strict.setVar("Boolean");
+    assert.throws(function() {
+        strict.setVar("String");
+    }, /Can't assign value of type/);
+    "\nState Tests:\n\n    These tests test the interaction of state and timelines, how timelines are generated\n    based on current state and how they can be manipulated.\n";
+    s = new State();
+    s.newScope("function", "foo");
+    s.newScope("if");
+    s.setReturn("RegExp");
+    s.nextScopeStage();
+    s.setReturn("String");
+    s.endScope();
+    s.endScope();
+    lax1 = s.getTimeline("foo");
+    boolean = new Timeline("boolean", "Boolean");
+    assert(((ՐՏ_12 = lax1.addCall({
+        inputs: [ num, boolean ]
+    })) === (ՐՏ_13 = [ {
+        type: "RegExp"
+    }, {
+        type: "String"
+    } ]) || typeof ՐՏ_12 === "object" && ՐՏ_eq(ՐՏ_12, ՐՏ_13)));
+    function setupBar() {
+        s.newScope("function", "bar", {
+            inputs: [ "Number" ],
+            returns: [ "String", "Number" ]
+        });
+        s.setArgs([ {
+            name: "z"
+        } ]);
+    }
+    setupBar();
+    assert.throws(function() {
+        s.setReturn("Boolean");
+    }, /Annotation states that function returns/);
+    assert.throws(function() {
+        s.endScope();
+    }, /Annotation states that function returns/);
+    setupBar();
+    s.setReturn("Number");
+    s.setReturn("Number");
+    assert.throws(function() {
+        s.endScope();
+    }, /Annotation states that function returns/);
+    setupBar();
+    s.setReturn("Number");
+    s.setReturn("String");
+    s.endScope();
+    strict1 = s.getTimeline("bar");
+    string = new Timeline("string", "String");
+    assert.throws(function() {
+        strict1.addCall({
+            inputs: [ string ]
+        });
+    }, /allowed signatures/);
+    assert(((ՐՏ_14 = strict1.addCall({
+        inputs: [ num ]
+    })) === (ՐՏ_15 = [ {
+        type: "Number"
+    }, {
+        type: "String"
+    } ]) || typeof ՐՏ_14 === "object" && ՐՏ_eq(ՐՏ_14, ՐՏ_15)));
+    s.newScope("class", "Human");
+    s.setParent("Animalia");
+    s.endScope();
+    jack = new Timeline("jack", s.getTimeline("Human").addCall({
+        inputs: []
+    })[0]);
+    assert(((ՐՏ_16 = jack.getSignature()) === (ՐՏ_17 = [ {
+        type: "Human",
+        parent: {
+            type: "Animalia",
+            external: true
+        }
+    } ]) || typeof ՐՏ_16 === "object" && ՐՏ_eq(ՐՏ_16, ՐՏ_17)));
+    s.newScope("class", "Scientist");
+    s.setParent("Human");
+    s.endScope();
+    tom = new Timeline("tom", s.getTimeline("Scientist").addCall({
+        inputs: []
+    })[0]);
+    tom.setVar("Number");
+    s.newScope("class", "Physicist");
+    s.setParent("Scientist");
+    s.endScope();
+    einstein = new Timeline("einstein", s.getTimeline("Physicist").addCall({
+        inputs: []
+    })[0]);
+    assert(jack.canAlwaysUseFor("Human"));
+    assert(!jack.canAlwaysUseFor("Scientist"));
+    assert(tom.canUseFor("Human"));
+    assert(!tom.canAlwaysUseFor("Human"));
+    assert(einstein.canAlwaysUseFor("Animalia"));
+    s.newScope("function");
+    s.setVar("hello", "String", [ "String" ]);
+    assert.throws(function() {
+        s.setVar("hello", "Number");
+    }, /Can't assign value of type/);
+    assert.throws(function() {
+        s.setVar("hello", "Number", [ "Number", "String" ]);
+    }, /conflicts with earlier format/);
+    s.setVar("hello", "String");
+    s.newScope("function");
+    s.setVar("hello", "Number");
+    s.endScope();
+    assert.throws(function() {
+        s.setVar("hello", "Number");
+    }, /Can't assign value of type/);
+    s.newScope("function");
+    s.markNonLocal("hello");
+    assert.throws(function() {
+        s.setVar("hello", "Number");
+    }, /Can't assign value of type/);
+    s.endScope();
+    s.newScope("function");
+    assert(((ՐՏ_18 = s.getTimeline("hello").getSignature()) === (ՐՏ_19 = [ {
+        type: "String"
+    } ]) || typeof ՐՏ_18 === "object" && ՐՏ_eq(ՐՏ_18, ՐՏ_19)));
+    s.endScope();
+    s.endScope();
+    s.newScope("function", "bar1");
+    assert.throws(function() {
+        s.setArgs([ "a", "b", "c" ]);
+    }, /Invalid format/);
+    assert.throws(function() {
+        s.setArgs([ {
+            name: "a",
+            default: "test"
+        }, {
+            name: "b"
+        }, {
+            name: "c"
+        } ]);
+    }, /Arguments with default values must come last/);
+    s.setArgs([ {
+        name: "a"
+    }, {
+        name: "b"
+    }, {
+        name: "c",
+        default: "test"
+    } ]);
+    assert.throws(function() {
+        s.setArgs([ {
+            name: "a"
+        }, {
+            name: "b"
+        }, {
+            name: "c"
+        } ]);
+    }, /Redeclaration of arguments/);
+    s.endScope();
+    assert.throws(function() {
+        s.addCall("bar1", {
+            inputs: [ num, num, num, num ]
+        });
+    }, /allowed signatures/);
+    assert.throws(function() {
+        s.addCall("bar1", {
+            inputs: [ num ]
+        });
+    }, /allowed signatures/);
+    s.addCall("bar1", {
+        inputs: [ num, num ]
+    });
+    s.addCall("bar1", {
+        inputs: [ num, num, num ]
+    });
+    s.onWarning(function(message) {
+        throw message;
+    });
+    s.newScope("function", "bar1");
+    s.setArgs([ {
+        name: "z"
+    } ]);
+    assert.throws(function() {
+        s.endScope();
+    }, /Redefining earlier declaration/);
+    "\nnow let's try compile-time kwargs resolution:\n\ndef bar1(a, b, c):  # already declared\n    ...\n\nbar1(c=num, a, b)       # error\nbar1(a, b, a=num)       # error\nbar1(a, c=num, b=num)   # ok\n";
+    assert.throws(function() {
+        ՐՏ_print(s.alignInputs("bar1", [ {
+            name: "c",
+            data: num
+        }, {
+            data: num
+        }, {
+            data: num
+        } ]));
+    }, /Non-keyword argument after keyword argument/);
+    assert.throws(function() {
+        ՐՏ_print(s.alignInputs("bar1", [ {
+            data: num
+        }, {
+            data: num
+        }, {
+            name: "a",
+            data: num
+        } ]));
+    }, /got multiple values for keyword argument/);
+    assert(((ՐՏ_20 = (function() {
+        var ՐՏidx49, ՐՏitr49 = ՐՏ_Iterable(s.alignInputs("bar1", [ {
+            data: "foo"
+        }, {
+            name: "c",
+            data: "baz"
+        }, {
+            name: "b",
+            data: "bar"
+        } ])), ՐՏres = [], input;
+        for (ՐՏidx49 = 0; ՐՏidx49 < ՐՏitr49.length; ՐՏidx49++) {
+            input = ՐՏitr49[ՐՏidx49];
+            ՐՏres.push(input.data);
+        }
+        return ՐՏres;
+    })()) === (ՐՏ_21 = [ "foo", "bar", "baz" ]) || typeof ՐՏ_20 === "object" && ՐՏ_eq(ՐՏ_20, ՐՏ_21)));
+    "\ndef qux(d:Number):\n    pass\n\na = 'foo'\ndef baz(b:Number, c:Number) -> Number:\n    qux(a)\n    return b + c\n\na = 4\nbaz(1, 2)\n";
+    s.newScope("function", "qux", {
+        inputs: [ "Number" ],
+        returns: []
+    });
+    s.setArgs([ {
+        name: "d"
+    } ]);
+    s.endScope();
+    s.setVar("a", "String");
+    s.newScope("function", "baz", {
+        inputs: [ "Number", "Number" ],
+        returns: [ "Number" ]
+    });
+    s.setArgs([ {
+        name: "b"
+    }, {
+        name: "c"
+    } ]);
+    assert.throws(function() {
+        s.addCall("qux", {
+            inputs: [ s.getTimeline("a") ]
+        });
+    }, /allowed signatures/);
+    s.onCall(function(callSignature) {
+        s.addCall("qux", {
+            inputs: [ s.getTimeline("a") ]
+        });
+    });
+    s.setReturn("Number");
+    s.endScope();
+    s.setVar("a", "Number");
+    s.addCall("baz", {
+        inputs: [ num, num ]
+    });
+    ՐՏ_print("ALL TESTS PASSED");
 })();
 })();
+
