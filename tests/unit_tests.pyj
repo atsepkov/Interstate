@@ -12,7 +12,7 @@ Basic Timeline Tests:
 """
 
 # lax variable timeline is based on observed assignments
-lax = Timeline('foo', 'Number') # initialize to Number
+lax = Timeline('foo', 'Number')                 # initialize to Number
 assert(lax.canAlwaysUseFor('Number'))           # allowed
 
 lax.setVar('String')                            # assign String to var (no error)
