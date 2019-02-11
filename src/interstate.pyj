@@ -1,931 +1,514 @@
+###################################################
+# WARNINGS:
+#   stated types that are never assigned
+#   binary/unary operation with unspecified type
+# ERRORS:
+#   assignment violates stated types
+#   binary/unary operation on incompatible types
+###################################################
+
+# issues:
+#   how do we represent hashes?
+#   how deep inside do we go?
+#   what about circular hashes?
+#   what about intentionally circular hashes? i.e. tree nodes
+#   when property throws an assignment error, it needs to be aware of its parent's name
+
+def unique(val, index, self):
+    return self.indexOf(val) is index
+
+def suggestion(message, line='N/A'):
+    console.log(f'SUGGESTION (${line}): ' + message)
+
+def warning(message, line='N/A'):
+    console.log(f'WARNING (${line}): ' + message)
+
+def error(message, line='N/A'):
+    console.error(f'ERROR (${line}): ' + message)
+
 """
-**********************************************************************
-
-  A RapydScript to JavaScript compiler.
-  https://github.com/atsepkov/RapydScript
-
-  -------------------------------- (C) ---------------------------------
-
-                       Author: Alexander Tsepkov
-                         <atsepkov@pyjeon.com>
-                         http://www.pyjeon.com
-
-  Distributed under BSD license:
-    Copyright 2016 (c) Alexander Tsepkov <atsepkov@pyjeon.com>
-
-**********************************************************************
+Temporary test/debug wrapper
 """
+def t(f):
+    return def(t, i, l):
+        # console.log("input >", i + f" ${t[i]}")
+        output, i1 = f(t, i, l)
+        # console.log("out >", i + f" ${t[i]}", i1 + f" ${t[i1]}")
+        # console.log("output >", JSON.stringify(output, null, 2))
+        # print('')
+        return output, i1
 
+def isWord(token):
+    return /^[_A-Za-z][_A-Za-z0-9]*$/.test(token)
 
-# ------- UTILITY FUNCTIONS ----------
-_warning = None
-_error = None
-
-# sorting helper
-def byType(a, b):
-    # TODO: consider removing this when arrays are replaced by sets in ES6
-    if a.type < b.type: return -1
-    if a.type > b.type: return 1
-    return 0
-
-def mergeArrays(originalArray, newArray):
-    # merging function for two arrays that eliminates duplicates
-    for newItem in newArray:
-        exists = False
-        for originalItem in originalArray:
-            if newItem == originalItem:
-                exists = True
+def _buildObjectLiteralNode(tokenList, index):
+    node = {
+        type: 'interface',
+        content: {}
+    }
+    index += 1
+    while True:
+        if isWord(tokenList[index]) and tokenList[index+1] is ':':
+            key = tokenList[index]
+            value, index = buildSignatureNode(tokenList, index+2)
+            node.content[key] = value
+            if tokenList[index] is '}':
                 break
-            if exists: break
-        if not exists:
-            originalArray.push(newItem)
-    return originalArray
-
-def normalize(arg):
-    if not arg:
-        self.error("No argument specified")
-    # normalizes the passed in argument into a compatible variable type
-    if type(arg) is 'String':
-        return { type: arg }        # variable or function with unknown signature
-    elif type(arg) is 'Object':
-        if not arg.type:
-            arg.type = '?'
-        if arg.inputs:
-            # convert each argument
-            arg.inputs = [normalize(x) for x in arg.inputs]
-        if arg.returns:
-            # each return statement signature (there could be more than one return type if there are multiple return statements)
-            arg.returns = [normalize(x) for x in arg.returns].sort(byType)
-        return arg                  # function with known signature
-    self.error('Unexpected type passed into variable declaration: ' + type(arg) + ', expected types: String or Object')
-
-def stringifySignature(varType):
-    # convert element signature to printable version
-    element = type(varType) is 'String' ? normalize(varType) : varType
-    if (element.type is 'Function' or not element.type) and element.inputs:
-        signature = 'Function(' + [stringifySignature(arg) for arg in element.inputs].join(', ') + ')'
-        if element.returns:
-            returns = [stringifySignature(arg) for arg in element.returns].join(' or ')
-            signature += ' -> ' + (element.returns.length > 1 ? '(' + returns + ')' : returns or 'Undefined')
-        return signature
-    elementType = element.type or '?'
-    return element.name ? element.name + ':' + elementType : elementType
+            elif tokenList[index] is ',':
+                index = index+1
+            else:
+                raise Error("Invalid implicit interface")
+        else:
+            raise Error("Invalid implicit interface")
+    return node, index
 
 
-'''
-challenges:
-    [x] non-typed function within typed (not allowed?)
-        nonlocal typing enforced (variable enforcement is based on scope)
-    [] are conditional types allowed? great for inputs / templates, incompatible with one-time types
-        perhaps single-assignment conditional? except None
-    [x] one-time types: can't change type after assignment, more harm or good?
-        no, it is good, limit it to typed functions
-    [] type annotations on assignment? interfaces? interface definitions?
-        interface allows removal and easier declaration of variables
-        implements interface? @interface?
-    [] non-typed tracking:
-        tracking through conditionals
-        tracking WHERE (link back to node?)
-            Assignment Node
-            Reference Node
-    [x] disable variable tracking via JS(), JS('a = a')
-    [X] interface annotation / class annotation
-        stuff:Number
-        item:Number or String
-        cls:MyClass = MyClass()
-        ifc:Interface = { foo: 1, bar: 3 }
-
-need:
-    reference counter
-    type tracker
-    reassignment tracker?
-'''
-
-class Var:
-    """
-    tracks type, perhaps value too in the future, and number of references
-    type can be simple or complex (functions)
-    """
-    def __init__(self, varType):
-        self.type = varType
-        self.properties = []
-
-#    @staticmethod
-#    def normalize(arg):
-#        # normalizes the passed in argument into a compatible variable type
-#        if type(arg) is 'String':
-#            return Var(arg)        # variable or function with unknown signature
-#        elif type(arg) is 'Object' and arg.type is 'Function':
-#            if arg.inputs:
-#                # convert each argument
-#                arg.inputs = [Var.normalize(x) for x in arg.inputs]
-#            if arg.returns:
-#                # each return statement signature (there could be more than one return type if there are multiple return statements)
-#                arg.returns = [Var.normalize(x) for x in arg.returns]
-#            return arg                  # function with known signature
-#        self.error('Unknown argument type passed into variable declaration')
-
-class Func(Var):
-    '''
-    handles functions
-    '''
-    def __init__(self, inputs=[], returns=[]):
-        # inputs and returns should themselves be Var types
-        Var.__init__(self, 'Function')
-        self.inputs = inputs.map(def(arg):
-            if type(arg) is 'String':
-                if arg is 'Function':
-                    return Func()       # function with unknown signature
-                else:
-                    return Var(arg)     # variable
-            elif type(arg) is 'Object':
-                return Func(arg)        # function with known signature
-            self.error('Unknown argument type passed into function declaration')
-        )
-        self.returns = returns
-
-class Class(Var):
-    '''
-    handles class declaration
-    '''
-    def __init__(self, inputs):
-        pass
-
-
-class Timeline:
-    '''
-    A variable timeline which includes references to it, as well as declarations and reassignments. This timeline includes 3 major types:
-
-    Basic variable, at its core this is the basis for the other 2, a function is just a variable generator and a class is a variable
-    with more detail:
-        {
-            type: '?'           - variable type
-            parent: { type },   - reference to parent
-            properties: []      - properties attached to this variable (this list will grow)
-        }
-
-    Function with signature (inputs and results are arrays of other variables):
-        {
+def buildSignatureNode(tokenList, index=0, isList=False):
+    if tokenList[index] is 'Function':
+        args, index = t(buildSignatureNode)(tokenList, index+1)
+        returns, index = t(buildSignatureNode)(tokenList, index+1, True)
+        return {
             type: 'Function',
-            properties: []      - properties attached to this function
-            inputs: [],         - function inputs
-            returns: []         - function outputs
-        }
-
-    Class with signature (note that class differs from variable in that class is a factory for a variable of the same type):
-    i.e. a = Class, b = Class() -> a is a class, b is a variable (instance of class)
-        {
-            type: 'Class',
-            properties: []      - class properties and static methods
-            inputs: [],         - constructor signature
-            returns: [],        - instance signature (array for consistency, length should always be one)
-        }
-
-    On assignment, multiple variables/properties can be linked to the same timeline, for omnipotent checks we will need to pass
-    through the code at least twice (first time to populate the timeline, second time to analyze all possible states - especially
-    important for properties). Perhaps we can just revisit properties directly, if we have pointers to them.
-    '''
-
-    def __init__(self, name, initialType=None, enforced=None):
-        self.name = name                                # original name for this variable
-        self.references = 0                             # number of references to this variable
-        if enforced:
-            self.enforced = []                          # array of types to enforce (variable has to be one of them)
-            for element in enforced:
-                self.enforced.push(normalize(element))
-        self.timeline = []                              # TODO: change to Set in ES6
-        self.properties = {}                            # properties existing on this variable
-        if initialType:
-            # even if initalType is not an object, these first 2 lines don't hurt, and do a better job normalizing
-            # the hash than special-case handlers
-            properties = initialType.properties
-            del initialType.properties
-            if properties:
-                # create a separate timeline for each property
-                for prop in properties:
-                    self.properties[prop] = Timeline(self.name + '.' + prop, properties[prop])
-            self.setVar(initialType)
-        self.delayedLogic = {
-            'call': []
-        }
-
-    def setVar(self, arg):
-        # sets this variable, for now only type is settable, perhaps value in the future as well
-        variable = normalize(arg)
-        if self.enforced:
-            # strict settings, make sure variable type matches
-            found = False
-            for varType in self.enforced:
-                if varType == variable:
-                    found = True
+            args: args,
+            rets: returns
+        }, index
+    elif tokenList[index] in ['(', '['] or isList:
+        end = tokenList[index] is '[' ? ']' : tokenList[index] is '{' ? '}' : ')'
+        # grouped logic or argument list
+        content = isList and tokenList[index] not in ['(', '['] ? [tokenList[index]] : []
+        while True:
+            index += 1
+            token = tokenList[index]
+            if token is ',':
+                # comma-separated list
+                continue
+                # index += 1
+                # token = tokenList[index]
+            elif token in ['(', '[']:
+                # nested list or logic
+                token, index = t(buildSignatureNode)(tokenList, index)
+            elif token is '{':
+                # implicit interface/hash
+                token, index = _buildObjectLiteralNode(tokenList, index)
+            elif token is '...':
+                spread, index = t(buildSignatureNode)(tokenList, index+1)
+                token = {
+                    type: '...',
+                    content: spread
+                }
+                index -= 1 # without this the outer loop won't see ending brace
+            elif token in ['or', 'and']:
+                if content.length is 1:
+                    right, index = t(buildSignatureNode)(tokenList, index+1)
+                    token = {
+                        type: token,
+                        left: content.pop(),
+                        right: right
+                    }
+                else:
+                    raise Error(f"Invalid type definition syntax on the left side of binary '${token}' operator.")
+            elif token is end or token is ';':
+                break
+            elif token is undefined:
+                if isList:
                     break
-            if not found:
-                # handle unexpected type assignment
-                expectedTypes = [stringifySignature(elem) for elem in self.enforced].join(' or ')
-                self.error("Can't assign value of type " + stringifySignature(variable) + " to '" + self.name + "', allowed type: " + expectedTypes)
-        else:
-            # lax variable settings, just push it to the list, but only if it's unique
-            # TODO: change to sets in ES6
-            for existing in self.timeline:
-                if variable == existing: return
-            self.timeline.push(variable)
-
-    def setSignature(self, signature):
-        # replaces existing signature with new one, used when closing a conditional or performing reassignment in same scope
-        if self.enforced:
-            for newVar in signature:
-                found = False
-                variable = normalize(newVar)
-                for origVar in self.enforced:
-                    if origVar == variable:
-                        found = True
-                        break
-                if not found:
-                    # handle unexpected type assignment
-                    expectedTypes = [stringifySignature(elem) for elem in self.enforced].join(' or ')
-                    self.error("Can't assign value of type " + stringifySignature(variable) + " to '" + self.name + "', allowed type: " + expectedTypes)
-        self.timeline = signature
-
-    def setProperty(self, prop, arg):
-        # sets property of this variable to a given type, since we can't really tell which type this property refers to, we'll assign it
-        # to the global timeline object
-        variable = normalize(arg)
-        if prop in self.properties:
-            self.properties[prop].setVar(variable)
-            # even if initalType is not an object, these first 2 lines don't hurt, and do a better job normalizing
-            # the hash than special-case handlers
-        else:
-            self.properties[prop] = Timeline(prop, variable)
-
-    def addRef(self):
-        # adds a reference to this variable
-        self.references += 1
-
-    def alignInputs(self, inputs):
-        '''
-        for kwargs-based functions call this first to move inputs around into correct order based on
-        detected function signature, possible returns are:
-            same inputs array but with arguments in correct order
-            None:   order couldn't be determined for some reason
-
-        args have to be in the following format:
-            {
-                ?name: item
-                data: anything you want (usually the AST node itself)
+                else:
+                    raise Error(f"Invalid type definition")
+            elif token is '}':
+                index -= 1 # roll back a bit for the outer hash to parse correctly
+                break
+            elif not isWord(token):
+                raise Error(f"Invalid token '${token}' in list")
+            content.push(token)
+        returns = content.length > 1 ? {
+            type: 'list',
+            content: content
+        } : content[0]
+        if end is ']':
+            returns = {
+                type: 'array',
+                content: returns
             }
-        '''
-        def byName(name):
-            return def(element):
-                return name is element.name
-        if self.enforced:
-            signatureList = self.enforced
+        return returns, index+1
+    elif tokenList[index] is '...':
+        spread, index = t(buildSignatureNode)(tokenList, index+1)
+        return {
+            type: '...',
+            content: spread
+        }, index
+    elif tokenList[index] is '{':
+        return t(_buildObjectLiteralNode)(tokenList, index)
+    elif tokenList[index] is '->':
+        return t(buildSignatureNode)(tokenList, index+1)
+    else:
+        return tokenList[index], index+1
+
+
+def parseSignature(signature, line):
+    """
+    Converts compact signature into JSON version used by the processor
+    """
+    chunks = signature.split(/\b/g)
+    tokens = []
+    _pushToken = def(token):
+        if token not in ['...', '(', ')', '[', ']', '->', ',', ':', ';', '{', '}']:
+            error(f"Invalid token: '${token}' in signature '${signature}'")
         else:
-            signatureList = self.timeline
-        found = False  # if True, we have at least 1 function call that satisfies the requirement
-        for expectedSignature in signatureList:
-            if expectedSignature.type in ['Function', 'Class']:
-                if expectedSignature.inputs:
-                    argMisalignment = inputs.length - expectedSignature.inputs.length
-                    if argMisalignment > 0 or argMisalignment < 0 and not expectedSignature.inputs[inputs.length].default:
-                        # signature has to match number of arguments unless the missing arguments are optional
-                        continue
-                    outputs = Array(expectedSignature.inputs.length)
-                    failed = False
-                    namesStarted = False
-                    for idx, input in enumerate(inputs):
-                        if namesStarted and not input.name:
-                            self.error("Non-keyword argument after keyword argument in function call to " + self.name + "().")
-                        if input.name:
-                            # named arguments started, resolve position
-                            namesStarted = True
-                            index = expectedSignature.inputs.findIndex(byName(input.name))
-                            if index is -1:
-                                # TODO: probably throw a warning here due to amibguity
-                                failed = True
-                                break # not the right signature, don't error yet because there may be a right one later
-                            elif outputs[index]:
-                                self.error("" + self.name + "() got multiple values for keyword argument '" + input.name + "'")
-                            else:
-                                # inject named argument into correct position
-                                outputs[index] = input
-                        else:
-                            # named arguments didn't start yet, maintain same order
-                            outputs[idx] = input
-                    if not failed:
-                        # found something that satisfies the signature perfectly, return it
-                        found = True
-                        return outputs
+            tokens.push(token)
+
+    for chunk in chunks:
+        if chunk.trim():
+            if chunk.toLowerCase() is not chunk.toUpperCase():
+                # this is a word
+                tokens.push(chunk)
+            else:
+                # set of special chars to parse
+                buffer = ''
+                for char in chunk:
+                    if char in '-.':
+                        buffer += char
+                    else:
+                        if char in ' ([{;' and buffer:
+                            # push token prefixing parens
+                            _pushToken(buffer)
+                            if char is not ' ':
+                                # push parens as a separate token
+                                _pushToken(char)
+                        elif char is not ' ':
+                            # push combo token like ->
+                            _pushToken(buffer + char)
+                        buffer = ''
+
+    # console.log(tokens)
+    try:
+        node = t(buildSignatureNode)(tokens)
+        return JSON.stringify(node, null, 2)
+    except as e:
+        error(f"${e} for signature '${signature}'.", line)
+
+
+class Variable:
+    """
+    Tracks timeline of a variable, types that have been seen assigned to it, and where the assignment occured
+
+    Signature is always an array of types
+    """
+    def __init__(self, name, line, signature=None):
+        self.name = name                    # variable name
+        self.line = line                    # line of initial declaration/use
+        self.signature = signature          # user-defined signature for this variable (strict enforcement)
+        self.assignments = []               # assignment promises
+        self.assignmentCounter = 0          # number of assignments seen
+        self.done = Promise(def(resolve):
+            self._endTimeline = resolve
+        )
+        self.typesSeen = {}         # types based on constants seen assigned to this variable
+        self.typesInferred = {}     # types inferred based on other variables seen assigned to this variable
+
+        self.propertyAssignments = {}       # properties seen assigned for this variable
+
+    def set(self, typeOrVar, line):
+        """
+        Triggered on variable assignment, t can be a string (in which case type is resolved immediatelly)
+        or another Variable class. Type resolution happens when all assigned variables terminate
+        """
+
+        self.assignmentCounter += 1
+        if type(typeOrVar) is 'Variable':
+            # variable assignment
+            self.assignments = self.assignments.concat(typeOrVar.done.then(def(inheritedTypes):
+                # once assigned variable timeline resolves, flatten all seen types from it
+                types = []
+                for t in inheritedTypes.types:
+                    if self.signature and t not in self.signature:
+                        types.push(t)
+                if types.length:
+                    error(
+                        f'Assignment of variable "${inheritedTypes.name}" to "${self.name}" is not allowed because it takes on incompatible types (${types}), types allowed by signature: ${self.signature}',
+                        line
+                    )
+                    self.typesInferred[t] = 1
+                return inheritedTypes.types.concat(Object.keys(self.typesSeen)).filter(unique)
+            ))
+        else:
+            # constant assignment
+            if typeOrVar is 'Object' and state.findSignature(self.signature).type is 'interface':
+                # make sure all required interface properties are assigned
+                self.typesSeen[typeOrVar] = self.typesSeen[typeOrVar] + 1 or 1
+            elif self.signature and typeOrVar not in self.signature:
+                # throw error about incompatible assignment
+                error(
+                    f'Attempting to assign "${typeOrVar}" type to variable "${self.name}" on line ${line}, types allowed by signature: ${self.signature}',
+                    line
+                )
+            else:
+                # allow basic assignment
+                self.typesSeen[typeOrVar] = self.typesSeen[typeOrVar] + 1 or 1
+
+    def getProperty(self, prop):
+        return self.propertyAssignments[prop]
+
+    def setProperty(self, prop, typeOrVar, line):
+        """
+        set to a property of this variable.
+        """
+        propertySignature = None
+
+        # we want to only allow assignment if it's valid by interface standards
+        if self.signature:
+            if self.signature.length is 1:
+                # first, find the actual signature
+                if type(self.signature[0]) is 'String':
+                    # explicit interface
+                    signature = state.findSignature(self.signature[0])
                 else:
-                    # we found something that satisfies the signature, but there isn't enough information to resolve arguments
-                    # tentatively take credit for it but continue searching for better matches
-                    found = True
-                    continue
-        # not found, but let addCall deal with it
-        return None
+                    # implicit interface
+                    signature = self.signature[0]
 
-    def addCall(self, inputs, alias=self.name):
-        # logs a call into our state tracker and returns the call's return signature
-        # inputs: array of timelines
-        self.references += 1
-        if self.enforced:
-            signatureList = self.enforced
-        else:
-            signatureList = self.timeline
-        callable = False
-        found = False  # if True, we have at least 1 function call that satisfies the requirement
-        returns = []
-        for expectedSignature in signatureList:
-            matches = False
-            if expectedSignature.type in ['Function', 'Class']:
-                callable = True
-                if expectedSignature.inputs:
-                    # compare input types against expected types
-                    argMisalignment = inputs.inputs.length - expectedSignature.inputs.length
-                    if argMisalignment > 0 or argMisalignment < 0 and not expectedSignature.inputs[inputs.inputs.length].default:
-                        # signature has to match number of arguments unless the missing arguments are optional
-                        continue
-                    for index, timeline in enumerate(inputs.inputs):
-                        if self.enforced:
-                            if not timeline.canUseFor(expectedSignature.inputs[index]):
-                                break
-                        else:
-                            if not timeline.canUseFor(expectedSignature.inputs[index]):
-                                break
-                        if index is inputs.inputs.length - 1:
-                            matches = True
-                            found = True
+                if signature.type in ['interface', 'class']:
+                    if prop not in signature.format:
+                        # immediate interface does not contain this property, need to check parents
+                        if signature.restricted:
+                            error(
+                                f"Variable '${self.name}' follows '${self.signature}' interface, which does not allow assignment to '${prop}' property",
+                                line
+                            )
+                    else:
+                        # immediate interface contains this property
+                        propertySignature = [signature.format[prop]]
                 else:
-                    # no point in continuing, vague function definition means every call signature is allowed
-                    found = True
-                    matches = True
+                    error(f"'${self.name}' is neither a class nor an interface, assignment to '${prop}' property is not allowed.", line)
+            else:
+                error(
+                    f"Ambiguous assignment to property '${prop}' of variable '${self.name}', variable takes on multiple types: ${self.signature}.",
+                    line
+                )
+        else:
+            types = []
+            for t in self.typesSeen:
+                if t in stdlib.classes:
+                    types.push(t)
 
-                if not matches: continue
+            if types.length:
+                error(
+                    f"Assignment of '${prop}' property to variable '${self.name}' is not allowed because variable could take on the following types: ${types}.",
+                    line
+                )
 
-                # TODO: change to Set in ES6
-                if expectedSignature.returns:
-                    for newReturn in expectedSignature.returns:
-                        exists = False
-                        if newReturn.type is '?':
-                            # give up, vague definition, tell the caller that the return can be anything
-                            return { type: '?' }
-                        for existingReturn in returns:
-                            if newReturn == existingReturn:
-                                exists = True
-                                break
-                        if not exists:
-                            returns.push(newReturn)
+        if not self.propertyAssignments[prop]:
+            # initial assignment to this property
+            self.propertyAssignments[prop] = Variable(f"${self.name}.${prop}", line, propertySignature)
+
+        self.propertyAssignments[prop].set(typeOrVar, line)
+
+    def terminate(self):
+        """
+        Triggered when variable timeline terminates, causing all variables that this variable was assigned to
+        to update variable types seen assigned to them.
+        """
+
+        for prop in self.propertyAssignments:
+            self.propertyAssignments[prop].terminate()
+
+        Promise.all(self.assignments).then(def(types):
+            types = types.reduce(def(acc, val): return acc.concat(val);, []) # flatten inherited types
+            allTypes = {}
+            for t in types:
+                if self.signature and t not in self.signature:
+                    # error(f'Variable assigned to "${self.name}" could be of type "${t}", types allowed by signature: ${self.signature}')
+                    pass
                 else:
-                    # the return can be anything
-                    returns = [{
-                        type: '?'
-                    }]
-                    break
+                    allTypes[t] = 1
+            for t in self.typesSeen:
+                allTypes[t] = 1
 
-        if not callable:
-            self.error("'" + alias + "' is not a callable object")
-        elif not found:
-            # no valid signature found for this function call
-            callSignature = [elem.stringify() for elem in inputs.inputs].join(', ')
-#            allowedFunctions = [[stringifySignature(input) for input in elem.inputs].join(', ') for elem in signatureList if elem.type is 'Function'].join(' or ')
-            allowedFunctions = [stringifySignature(elem) for elem in signatureList if elem.type is 'Function'].join(' or ')
-            self.error("Can't call function " + alias + " with signature 'Function(" + callSignature + ")', allowed signatures: " + allowedFunctions)
+            # tracker's code refactor suggestions to developer
+            typeList = Object.keys(allTypes)
+            if self.signature and self.signature.length > 2:
+                suggestion(
+                    f'Variable "${self.name}" signature states too many types (${self.signature}), consider separating into additional variables for clarity.',
+                    self.line
+                )
+            elif typeList.length > 2:
+                suggestion(
+                    f'Variable "${self.name}" takes on too many types (${typeList}), consider separating into additional variables for clarity.', self.line,
+                    self.line
+                )
+            if not self.signature and self.assignmentCounter > 1 and typeList.length is 1:
+                suggestion(f'All assignments to variable "${self.name}" are of type "${typeList[0]}", consider specifing type."', self.line)
 
-        for command in self.delayedLogic['call']:
-            command(inputs)
-        return returns
+            for t in self.signature or []:
+                if t not in allTypes:
+                    warning(f'Variable "${self.name}" states a possible type of "${t}", but no such type is ever assigned.', self.line)
+            self._endTimeline({
+                name: self.name,
+                types: Object.keys(allTypes),
+                signature: self.signature
+            })
+        )
 
-    def onCall(self, function):
-        # add logic to trigger later (i.e. delay checking the variable timeline until)
-        self.delayedLogic['call'].push(function)
 
-    def getSignature(self):
-        # returns the signature for this object
-        # note that you're better off letting this system handle comparisons and manipulation of signatures than doing it yourself
-        if self.enforced:
-            # return all allowed types if this variable is strict about its types
-            return self.enforced
-        else:
-            # return everything this variable has been at one time or another if it's not strict
-            # TODO: replace this N^2 operation with a Set in ES6
-            return self.timeline
+class StandardLib:
+    def __init__(self):
+        self.classes = { key : key for key in ['Number', 'String', 'Array', 'RegExp', 'Date', 'Object'] }
 
-    def stringify(self):
-        sig = self.getSignature()
-        return [stringifySignature(x) for x in sig].join(' or ')
+stdlib = StandardLib()
 
-    def getProperty(self, *props):
-        # takes a chained list of properties and returns the relevant timeline
-        # i.e. to get foo.a.b.c['d'], call foo.getProperty('a', 'b', 'c', 'd')
-        timeline = self.properties
-        for prop in props:
-            timeline = timeline[prop]
-            if not timeline:
-                # property may be coming from outside, give up trying to make sense of it
-                # we also can't raise an error for the same reason, but a linter could warn about it
-                return None
-        return prop
 
-    def canUseFor(self, expectedType):
-        # returns true if the variable matches one of expected types, false otheriwse
-        # note that this will not check function/class signature
-        expectedType = normalize(expectedType)
-        vars = self.getSignature()
+class Scope:
+    """
+    Tracks variables declared in this specific scope, interstate will nest scopes.
+    """
+    def __init__(self, name, line):
+        self.name = name    # scope name
+        self.line = line    # line number where declaration starts
+        self.classes = {}   # user-declared classes
+        self.variables = {} # variables declared in this scope
+        self.interfaces = {}# interfaces declared in this scope
 
-        for possibleType in vars:
-            # inheritance resolution
-            while possibleType:
-                if possibleType.type is expectedType.type or expectedType.type is '?':
-                    return True
-                possibleType = possibleType.parent
-        return False
+    def newClass(self, name, line, format, parents, interfaces, restricted):
+        self.classes[name] = {
+            type: 'class',
+            format: format,
+            parents: parents,
+            interfaces: interfaces,
+            restricted: restricted,
+            scope: state.scopes.length-1,
+            line: line
+        }
 
-    def canAlwaysUseFor(self, expectedType):
-        # a stricter version of canUseFor, will only return true if compatible type can always be ensured
-        if self.getSignature().length == 1 and self.canUseFor(expectedType):
-            return True
-        return False
+    def newInterface(self, name, line, format, parents, restricted):
+        # make sure it doesn't clobber an earlier generic or interface
 
-    # --- logic to delay execution until a later time ---
-
-    def addDelayed(self, function):
-        self.delayedLogic.push(function)
-
-    def triggerDelayed(self):
-        # triggers delayed logic
-        for function in self.delayedLogic:
-            function()
-
-    # ----- ERROR HANDLERS ------
-    def warning(self, message):
-        if _warning:
-            _warning(message)
-
-    def error(self, message):
-        if _error:
-            _error(message)
-        else:
-            raise Error(message)
+        self.interfaces[name] = {
+            type: 'interface',
+            format: format,
+            parents: parents,
+            restricted: restricted,
+            scope: state.scopes.length-1,
+            line: line
+        }
 
 
 class State:
+    """
+    Tracks declared variables and rertieves the timeline for relevant one as needed. Also tracks declared types and generics.
+    """
     def __init__(self):
-        self.scopes = []
-        self.newScope('global')
-        self.functionScope = -1 # inner-most function scope
-        self.classScope = -1    # inner-most class scope
+        self.scopes = []    # stack of scopes
+        self.generics = {}  # generic declarations seen in the code
 
-    def newScope(self, scopeType, name=None, annotation=None):
-        # starts a new scope
-        self.scopes.push({
-            type: scopeType,    # type of scope (class/function)
-            name: name,         # name of this class/function
-            vars: {},           # variables in this scope
-            functions: {},      # list of functions declared in this scope and their signatures
-            classes: {},        # classes in this scope
-            nonlocal: {},       # variables shared with outer scope
-            delayed: {
-                'endScope': [], # list of functions to trigger when endScope is called
-                'call': []      # list of functions to trigger when addCall is called on resulting timeline
-            }
-        })
-        if scopeType is 'class':
-            self.classScope = self.scopes.length - 1
-        elif scopeType is 'function':
-            scope = self.scopes[-1]
-            if annotation:
-                annotation.type = 'Function'
-                scope.annotation = normalize(annotation)
-            scope.seenReturns = []
-            scope.returned = False  # set to true after the scope has returned, useful for catching dead code
-            self.functionScope = self.scopes.length - 1
-        elif scopeType in ['if', 'switch', 'try']:
-            scope = self.scopes[-1]
-            scope.stages = [{}]     # each stage will append a hash here, which will store variables that got set in that stage
-            scope.final = False     # once scope reaches its final stage, this will be changed to true
 
-    def nextScopeStage(self, final=False):
-        # transitions through scope stages (i.e. if/else, try/catch)
-        # final implies that this stage will always be the last stage (i.e. else rather than elif, default case for switch)
-        scope = self.scopes[-1]
-        scope.stages.push({})
-        scope.final = final
+    # scope control
+    def newScope(self, name, line):
+        self.scopes.push(Scope(name, line))
 
-    def endScope(self):
-        # closes the top-most scope, returns the scope and adds function/class signature to parent scope
-        top = self.scopes.pop()
-        if top.type is 'function':
-            for index, scope in enumerate(reversed(self.scopes)):
-                if scope.type is 'function':
-                    self.functionScope = index
-                    break
-                elif scope.type is 'global':
-                    self.functionScope = -1
-                    break
-        elif top.type is 'class':
-            for index, scope in enumerate(reversed(self.scopes)):
-                if scope.type is 'class':
-                    self.classScope = index
-                    break
-                elif scope.type is 'global':
-                    self.classScope = -1
-                    break
+    def endScope(self, line):
+        scope = self.scopes.pop()
+        for var in scope.variables:
+            scope.variables[var].terminate()
 
-        if top.type is 'function':
-            if top.annotation and top.annotation.returns and top.annotation.returns != top.seenReturns:
-                self.error(
-                    "Annotation states that function returns " +
-                    [stringifySignature(x) for x in top.annotation.returns].join(' or ') +
-                    ", actual return types observed: " + ([stringifySignature(x) for x in top.seenReturns].join(' or ') or 'Undefined')
-                )
-            if top.name:
-                # if function doesn't have a name, we can't reference it later
-                if top.annotation:
-                    # annotation is specified, use exactly that
-                    inputs = []
-                    for index, element in enumerate(top.annotation.inputs):
-                        inputs.push(Object.assign({
-                            name: top.args[index].name,
-                            default: top.args[index].default
-                        }, element))
-                    declaration = {
-                        type: 'Function',
-                        inputs: inputs,
-                        returns: top.annotation.returns
-                    }
-                else:
-                    # no annotation is specified, use the signature we observed
-                    declaration = {
-                        type: 'Function',
-                        returns: top.seenReturns
-                    }
-                    if top.args: declaration.inputs = top.args
 
-                # sanity check to make sure we're not bastardizing polymorphism
-                existingTimeline = self.getTimeline(top.name)
-                if existingTimeline and declaration.inputs:
-                    canUse = True
-                    for function in existingTimeline.getSignature():
-                        if function.type is 'Function':
-                            for index, arg in enumerate(function.inputs):
-                                if arg.name is not declaration.inputs[index].name or arg.type is not declaration.inputs[index].type:
-                                    self.warning(
-                                        "Redefining earlier declaration of " + top.name + "() with incompatbile signature: " +
-                                        stringifySignature(declaration) + ", allowed signatures: " + existingTimeline.stringify()
-                                    )
-                                    canUse = False
-                                    break
-                        if not canUse: break
+    def gatherProperties(self, interfaceName, startingScope=state.scopes.length-1):
+        """
+        Recursively traverses parents to gather properties that are part of this class/interface
+        """
+        properties = {}
+        signature = self.findSignature(interfaceName, startingScope)
+        for obj in signature.parents:
+            parentProps = self.gatherProperties(obj, signature.scope)
+            properties = Object.assign(properties, parentProps)
 
-                timeline = self.scopes[-1].functions[top.name] = Timeline(top.name, declaration)
-        elif top.type is 'class':
-            # we're returning a class, which is effectively a function that generates the variable of the type
-            # defined by class name
-            timeline = self.scopes[-1].classes[top.name] = Timeline(top.name, {
-                type: 'Class',
-                properties: top.staticMethods,
-#                inputs: 
-                returns: [{
-                    type: top.name,
-#                    properties: top.functions,
-                    parent: top.parent and top.parent.returns ? top.parent.returns[0] : None
-                }]
-            })
-        elif top.stages:
-            '''
-            constructs that will satisfy this and replace the timeline
-                if ...
-                elif ...
-                else ...
+        return Object.assign(properties, signature.format)
 
-                switch:
-                    case ...
-                    case ...
-                    default ...
 
-                try ...
-                except (if except captures ALL cases)
-
-            constructs that will not (if these constructs create a new variable, it can also have undefined state):
-                if ...
-                elif ...
-
-                switch:
-                    case ...
-                    case ...
-
-                while ...
-                for ...
-
-                try ...
-                except ...
-
-            constructs that will negate replacement of timeline:
-                try ...
-                except ...
-
-            (because uncaught error from a deeper scope can be caught by a raise here)
-            '''
-            # for every variable that appears in all stages and has final stage, we replace existing timeline
-            # we also set this variable on parent's scope if parent has stages in order to gracefully handle
-            # nested conditionals
-            for var in top.stages[0]:   # var value is a conditional (array)
-                signature = top.stages[0][var]
-                occursInAll = True
-                for stage in top.stages[1:]:
-                    if var in stage:
-                        # mergeArrays all assignments from this stage into the signature
-                        signature = mergeArrays(signature, top.stages[-1][var])
-                    else:
-                        # no assignments happened in this stage
-                        occursInAll = False
-
-                functionScope = self.getScopeIndex('function')
-                classScope = self.getScopeIndex('class')
-                if occursInAll and top.final:
-                    # var assignment happened in all stages, replace signature
-                    if self.scopes[-1].stages:
-                        # if parent is stage-based as well (if/try/switch)
-                        self.scopes[-1].stages[var] = signature
-                    elif functionScope > classScope:
-                        if var is not 'return':
-                            self.onCall(def(input):
-                                # when this function gets called, overwrite signature
-                                self.getTimeline(var).setSignature(signature)
-                            , 'function')
-                    else:
-                        if var is 'return':
-                            self.error("Return outside a function.")
-                        # not in a function
-                        self.getTimeline(var).setSignature(signature)
-                else:
-                    if self.scopes[-1].stages:
-                        # if parent is stage-based as well (if/try/switch)
-                        if self.scopes[-1].stages[-1][var]:
-                            # something was set previously, it will serve as the fallback
-                            self.scopes[-1].stages[-1][var] = mergeArrays(self.scopes[-1].stages[-1][var], signature)
-                        else:
-                            # nothing was set previously, undefined value possible
-                            self.scopes[-1].stages[-1][var] = mergeArrays(signature, [normalize('Undefined')])
-                    elif functionScope > classScope:
-                        if var is 'return':
-                            # undefined return is now possible
-                            self.setReturn('Undefined')
-#                            functionScope.seenReturns = mergeArrays(functionScope.seenReturns, [normalize('Undefined')])
-                        else:
-                            self.onCall(def(input):
-                                # when this function gets called, overwrite signature
-                                timeline = self.getTimeline(var)
-                                for element in signature:
-                                    timeline.setVar(element)
-                            , 'function')
-                    else:
-                        # not in a function
-                        if var is 'return':
-                            self.error("Return outside a function.")
-                        for element in signature:
-                            timeline.setVar(element)
-
-        # NOTE: we do not handle imports here due to the number of available import systems, I may add some logic for it
-        # in the future, or let the user handle it manually, they should be able to since they have access to the entire
-        # popped scope object
-
-        if timeline:
-            for command in top.delayed['call']:
-                timeline.onCall(command)
-        for command in top.delayed['endScope']:
-            # trigger every delayed action and pass it scope in case it needs to do something with it, this is useful
-            # for both handling imports as well as handling cases like self-referencing classes that may need the
-            # entire class to be parsed before triggering the logic
-            command(top)
-        return top
-
-    def setParent(self, name):
-        # set parent of current class scope
-        scope = self.scopes[self.classScope]
-        parent = self.getSignature(name)[0]
-        # more graceful handling of 3rd party inheritance
-        if parent.type is '?':
-            parent.type = 'Class'
-            parent.returns = [{
-                type: name,
-                external: True
-            }]
-            parent.external = True
-        scope.parent = parent
-
-    def setArgs(self, args):
-        '''
-        arg format:
-            {
-                name: 'argname',
-                ?default: 'value'
-            }
-        '''
-        scope = self.scopes[self.functionScope]
-        # TODO: change to existential operator
-        if scope.args:
-            # shouldn't really happen unless there is a bug in the compiler itself
-            self.error("Redeclaration of arguments for " + self.name + "() is not allowed.")
-        if scope.annotation and scope.annotation.inputs and scope.annotation.inputs.length is not args.length:
-            # shouldn't really happen unless there is a bug in the compiler itself
-            self.error("Specified arguments don't line up with function annotation.")
-        defaultStarted = False
-        for arg in args:
-            if not arg.name:
-                self.error("Invalid format for args in " + self.name + "() declaration, required format is an array of { name: 'string', ?default: ... }")
-            if arg.default:
-                defaultStarted = True
-            else:
-                # raise an error when seeing something like 'def func(a=5, b)'
-                if defaultStarted: self.error("Missing default value for argument '" + arg.name + "' of function '" + scope.name + "'. Arguments with default values must come last in function declaration.")
-        scope.args = args
-
-    def canUseFor(self, name, varType):
-        # returns true if this timeline can be used to satisfy function signature requiring varType
-        return self.getTimeline(name).canUseFor(varType)
-
-    def canAlwaysUseFor(self, name, varType):
-        # returns true if this timeline can be used to satisfy function signature requiring varType
-        return self.getTimeline(name).canAlwaysUseFor(varType)
-
-    def markNonLocal(self, name):
-        scope = self.scopes[self.getScopeIndex('function')]
-        if scope.returned:
-            self.error("Dead code after return statement.")
-        scope.nonlocal[name] = True
-
-    def setVar(self, name, varType, enforced=None, local=True):
-        # updates the variable in relevant scope
-        # NOTE: if array is passed in, assume a conditional variable type
-
-        # first check if we're inside a staged scope, if so update the stage rather than the variable itself
-        scope = self.scopes[-1]
-
-        functionScope = self.getScopeIndex('function')
-        if functionScope.returned or scope.stages and scope.stages[-1]['return']:
-            self.error("Dead code after return statement.")
-
-        timeline = self.getTimeline(name, local)
-        if timeline:
-            if enforced:
-                # make sure no type violations in enforcement
-                for var in enforced:
-                    if not timeline.canUseFor(var):
-                        self.error(
-                            "Variable redeclaration (" + [stringifySignature(var) for var in enforced].join(' or ') +
-                            ") for '" + name + "' conflicts with earlier format: " + timeline.stringify()
-                        )
-            # update of existing variable, except if we're in a sub-scope
-            if not scope.stages:
-                timeline.setVar(varType)
+    # operations within scope
+    def newClass(self, name, line, format={}, parents=[], interfaces=[], restricted=False):
+        if name in self.generics:
+            error(f"Class declaration '${name}' redefines an earlier generic, if this is in fact the same class, move the declaration to the top.", line)
         else:
-            # new declaration
-            # make sure to assign to top-most class or function scope
-            vars = self.scopes[Math.max(0, self.classScope, self.functionScope)].vars
-            if scope.stages:
-                vars[name] = Timeline(name, 'Undefined', enforced)
-            else:
-                vars[name] = Timeline(name, varType, enforced)
+            if format:
+                properties = {}
+                newProperties = {}
+                for parent in parents:
+                    properties = Object.assign(properties, self.gatherProperties(parent))
+                for prop in format:
+                    possibleTypes = format[prop].sort()
+                    newProperties[prop] = possibleTypes
+                    if properties[prop] and properties[prop] != possibleTypes:
+                        warning(f"Class declaration for '${name}' redefines the format of '${prop}' property declared by one of its parents.", line)
+            self.scopes[-1].newClass(name, line, newProperties, parents, interfaces, restricted)
 
-        if scope.stages:
-            if name in scope.stages[-1]:
-                scope.stages[-1][name].push(normalize(varType))
-            else:
-                scope.stages[-1][name] = [normalize(varType)]
-
-    def setReturn(self, varType):
-        # document a return for current scope
-        actual = normalize(varType)
-        functionScopeIndex = self.getScopeIndex('function')
-        functionScope = self.scopes[functionScopeIndex]
-        classScopeIndex = self.getScopeIndex('class')
-        scope = self.scopes[-1]
-
-        if functionScope.returned or scope.stages and scope.stages[-1]['return']:
-            self.error("Dead code after return statement.")
-
-        if scope.stages and functionScopeIndex > classScopeIndex:
-            scope.stages[-1]['return'] = True
-        elif scope.type is 'function':
-            scope.returned = True
-        else:
-            self.error("Return outside function.")
-
-        if functionScope.annotation and functionScope.annotation.returns:
-            # strict function definition
-            for expected in functionScope.annotation.returns:
-                if expected == actual:
-                    for seen in functionScope.seenReturns:
-                        if actual == seen:
-                            return  # duplicate
-                    functionScope.seenReturns.push(actual)
-                    return  # this is a valid return, we're all set with our safety check
-            self.error(
-                "Annotation states that function returns " +
-                [stringifySignature(x) for x in functionScope.annotation.returns].join(' or ') +
-                ", actual return type: " + stringifySignature(actual)
+    def newInterface(self, name, line, format, parents=[], restricted=False):
+        if name in self.generics:
+            error(
+                f"Interface declaration '${name}' redefines an earlier generic, if this is in fact the same interface, move the declaration to the top.",
+                line
             )
         else:
-            # annotation not specified, every return is valid, but let's document it just for sanity
-            # TODO: replace with ES6 sets
-            for seen in functionScope.seenReturns:
-                if actual == seen:
-                    return  # duplicate
-            functionScope.seenReturns.push(actual)
+            properties = {}
+            newProperties = {}
+            for parent in parents:
+                properties = Object.assign(properties, self.gatherProperties(parent))
+            for prop in format:
+                possibleTypes = format[prop].sort()
+                newProperties[prop] = possibleTypes
+                if properties[prop] and properties[prop] != possibleTypes:
+                    warning(f"Interface '${name}' redefines the format of '${prop}' property declared by one of its parents.", line)
+            self.scopes[-1].newInterface(name, line, newProperties, parents, restricted)
 
-    def addRef(self, name):
-        # add variable use reference (in this case we don't care if it's a variable or a function call)
+    def newGeneric(self, name, line, inherits=None):
+        self.generics[name] = {
+            type: 'generic',
+            superclass: inherits,
+            scope: self.scopes.length-1,
+            line: line # first use of this generic
+        }
 
-        scope = self.scopes[-1]
-        functionScope = self.getScopeIndex('function')
-        if functionScope.returned or scope.stages and scope.stages[-1]['return']:
-            self.error("Dead code after return statement.")
+    def newVariable(self, name, line, signature=None, assignment=None):
+        return self.scopes[-1].variables[name] = Variable(name, line, signature)
 
-        timeline = self.getTimeline(name)
-        if timeline: timeline.addRef()
-        # if it's not found, this could be a variable from outside library or global
-        return timeline
+    def newReturn(self, var, line):
+        """
+        Document an explicit return in a function call, used for building implicit function signature and/or
+        testing explicit function signature.
+        """
+        pass
 
-    def onEndScope(self, function, scopeType=None):
-        # performs the function after current scope terminates, this is useful for handling self-references
-        # within classes, like reference to self.staticMethod()
-        index = scopeType ? self.getScopeIndex(scopeType) : self.scopes.length - 1
-        self.scopes[index].delayed['endScope'].push(function)
+    def findSignature(self, name, startingScope=state.scopes.length-1):
+        """
+        Find interface/class/variable by name, returns signature of the interface or None if undefined
 
-    def onCall(self, function, scopeType=None):
-        index = scopeType ? self.getScopeIndex(scopeType) : self.scopes.length - 1
-        self.scopes[index].delayed['call'].push(function)
+        Takes string, returns node describing the inteface
+        """
 
-    def alignInputs(self, name, inputs):
-        timeline = self.getTimeline(name)
-        if timeline:
-            return timeline.alignInputs(inputs)
-        else:
-            return None
+        # first, check if it's a basic type or part of JS standard library
+        if name in stdlib.classes:
+            return stdlib.classes[name]
 
-    def addCall(self, name, signature):
-        # add function call, this time we check if the annotation matches
+        # now check for inner-most scope declaration
+        for scope in self.scopes[startingScope::-1]:
+            if name in scope.interfaces:
+                return scope.interfaces[name]
+            elif name in scope.classes:
+                return scope.classes[name]
+            elif name in scope.variables:
+                return scope.variables[name]
 
-        scope = self.scopes[-1]
-        functionScope = self.getScopeIndex('function')
-        if functionScope.returned or scope.stages and scope.stages[-1]['return']:
-            self.error("Dead code after return statement.")
+        # now check generics
+        if name in self.generics:
+            return self.generics[name]
 
-        timeline = self.getTimeline(name)
-        if timeline: timeline.addCall(signature)
-        # if it's not found, this could be a function from outside library or global
+        return None
 
-    def getSignature(self, name):
-        # return a list of all types this variable can be
-        timeline = self.getTimeline(name)
-        if timeline:
-            return timeline.getSignature()
-        else:
-            return [{
-                type: '?'
-            }]
+    def invoke(self, name, parameters):
+        """
+        Used for function calls, tests inputs and outputs, as well as handle timeline checks.
+        """
+        print(self.generics)
+        sig = self.findSignature(name)
+        print(parseSignature(sig.signature[0]))
 
-    def getTimeline(self, name, local=False):
-        # obtains the underlying timeline for more direct manipulation
-        # stayLocal will stay local unless the variable is already flagged as nonlocal
-        timeline = None
-        index = self.scopes.length - 1
-        while not timeline and index >= 0:
-            if name in self.scopes[index].vars:
-                timeline = self.scopes[index].vars[name]
-            elif name in self.scopes[index].functions:
-                timeline = self.scopes[index].functions[name]
-            elif name in self.scopes[index].classes:
-                timeline = self.scopes[index].classes[name]
-            elif not local or self.functionScope > 0 and name in self.scopes[self.functionScope].nonlocal:
-                index -= 1
-            else:
-                # local is set, don't traverse outer scopes
-                break
-        return timeline
+state = State()
 
-    def getScopeIndex(self, scopeType):
-        # gets top-most scope of a given type
-        for index, scope in enumerate(reversed(self.scopes)):
-            if scope.type is scopeType:
-                return self.scopes.length - index - 1
-        return -1
 
-    # ----- ERROR HANDLERS ------
-    def onWarning(self, callback):
-        nonlocal _warning
-        _warning = callback
-
-    def warning(self, message):
-        if _warning:
-            _warning(message)
-
-    def onError(self, callback):
-        nonlocal _error
-        _error = callback
-
-    def error(self, message):
-        if _error:
-            _error(message)
-        else:
-            raise Error(message)

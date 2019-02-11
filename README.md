@@ -1,19 +1,9 @@
-# Interstate
+# Interstate & Detour
+This is an enhancement to RapydScript that provides similar capability to TypeScript without the excessive verbosity that TypeScript forces on the developer.
+
+## Interstate
 ![Interstate Logo](http://res.cloudinary.com/atsepkov/raw/upload/v1478544146/interstate_logo.png)  
-Compiler state manager (originally written for RapydScript). This state manager is currently designed for RapydScript, and can be used by compilers and linters alike. It's a much more powerful context-tracker for the state of variable declarations and assignments than RapydScript's original context tracking system. The main motivation for this project was to allow RapydScript to match and exceed the power of TypeScript. Interstate can one-up TypeScript's system for the following reasons:
-
-- Interstate thinks in probabilities rather than exact types, allowing more granular control to developers in terms of inputs.
-- Interstate is designed for a cleaner subset of JavaScript (RapydScript) and hence can be more aggressive about its assumptions.
-- Interstate embraces Pythonic patterns of failing early rather than lax JavaScript patterns TypeScript has to respect.
-- Interstate declutters the language rather than adding more clutter/syntax to it like TypeScript with its C# keywords.
-
-Interstate is to a parser what acceleration is to velocity, effectively a derivative:
-
-| Compiler | Geography | Math |
-|----------|-----------|------|
-| Lexer    | Position  | ƒ    |
-| Parser   | Velocity  | ƒ'   |
-| Interstate | Acceleration | ƒ'' |
+Interstate tracks the state of each variable in your code, and performs compile-time safety checks when possible. It will detect static assignment issues, but not dynamic ones, which is where Detour comes in (not yet implemented). Features of Interstate:
 
 Features of Interstate:
 
@@ -26,187 +16,117 @@ Features of Interstate:
 - Enforces proper returns for function calls
 - Allows enforcing a specific subset of permitted types for each variable
 - Resolves return signatures for function calls at compile time
-- Dead-code elimination
+- Awareness of standard JavaScript APIs for better type tracking (i.e. Math.PI = Number) (TODO)
+- Analysis of `.runtime-manifest.json` file during consecutive compilations for better variable detection (TODO)
+- Dead-code elimination (TODO)
 
-## Install
+### Usage
+You can create variables individually, but the recommended usage is to import `state` object from `interstate` and use it as a global variable state:
 
-	npm install interstate-js
+    from interstate import state
 
-## Usage
+    state.newVariable('foo', 1)                           # encountered new variable named foo on line 1
+    state.newVariable('bar', 2, ['Number', 'String'])     # encountered bar declaration on line 2 that can only be Number or String
 
-### Function Declaration
-```python
-from interstate import State, Timeline
+    state.newScope('functionName', 3)                     # encountered function definition on line 3
+    state.endScope(5)                                     # function declaration finished on line 5
 
-s = State()                        # create a new state object
-s.newScope('function', 'foo')      # start a new function named 'foo'
-s.setReturn('Number')              # declare a return statement which returns an object of type Number
+	state.newClass('className', 8)                        # class delcaration started on line 8
+	state.endScope(9)                                     # class declaration ended
 
-# ensure that function takes in Number as first argument and String as second and that all return
-# types are String
-s.newScope('function', 'bar', {
-    inputs: ['Number', 'String'],
-    returns: ['String']
-})
+	state.newGeneric('genericName', 12)                   # generic definition on line 12 encountered
+	state.newInterface('interfaceName', 14, obj)          # encountered interface definition on line 14, obj contains a map of children
 
-# terminate current scope, check that return types are met, and create relevant variables
-s.endScope()
-```
+	state.findSignature('objName')                        # find signature for a particular object (interface, generic, class, function, etc.)
 
-### Class Declaration
-```python
-s.newScope('class', 'Physicist')   # start declaring a new class
-s.setParent('Scientist')           # set parent for the class currently being declared
-s.endScope()
+	# interface use example
+	state.newInterface('Coord', 15, { x: ['Number'], y: ['Number'] })
+	i = state.newVariable('i', 20, ['Coord'])             # ERROR: requires immediate assignment of object passing Coord interface
+	i = state.newVariable('i', 20, ['Coord'], {x:['Number'], y:['Number']}) # OK
+	i.setProperty('x', 'String', 26)                      # ERROR: interface only allows Number
+	i.setProperty('y', 'Number', 27)                      # OK
+	i.setProperty('z', 'Number', 28)                      # OK, interface is allowed to have extra properties
 
-# retrieve the timeline for the Physicist class
-physicist = s.getTimeline('Physicist')
-# use Physicist class to declare an object named 'einstein' of type Physicist
-einstein = Timeline('einstein', physicist.addCall({
-    inputs: []
-}))
-# retrieve timeline signature, this is a list of types that this variable has stored
-einstein.getSignature()
-```
+### JavaScript Manifests
+Manifests allow a convenient way to declare types for external resources in one location. Interstate comes with builtin-manifest but allows you to define an additional one in your project, which it will check for at compile time. Due to the nature of JavaScript, your app may redefine standard types and confuse Interstate. You can explicitly state those in project-manifest to remedy the issue. 
 
-### Function Calls
-You could also use onCall to create more advanced type checks (at the time of function call rather than declaration).
-For example, imagine we had the following code:
+Manifest structure example:
 
-```python
-def qux(d:Number):
-    pass
+    {
+        ...
+        "Math": {
+            "type": "Object",
+            "props": {
+                "PI": "Number",
+                "E": "Number",
+                "LN2": {
+                    "type": "Number"
+                },
+                ...
+                "sin": {
+                    "type": "Function",
+                    "args": {
+                        "1": "Number"
+                    }
+                    "returns": ["Number"]
+                }
+                "max": {
+                    "type": "Function",
+                    "args": {
+                        "...": "Number"
+                    }
+                    "returns": ["Number"]
+                },
+                "min": "Function(...Number) -> Number",
+                "pow": {
+                    "type": "Function",
+                    "args": {
+                        "2": ["Number", "Number"]
+                    },
+                    "returns": ["Number"]
+                },
+                "floor": "Function(Number) -> Number"
+            }
+        }
+        ...
+        "Array": {
+            "type": "Object",
+            "prototype": {
+                "concat": "Function([MyTypes], ...[OtherTypes]) -> [MyTypes and OtherTypes]"
+            }
+        }
+    }
 
-a = 'foo'
-def baz(b:Number, c:Number) -> Number:
-    qux(a)
-    return b + c
+#### builtin-manifest.json
+Standard manifest that exists within Interstate source code to define common JS libraries, you should not be editing this. 
 
-a = 4
-baz(1, 2)
-```
+#### library-manifest.json
+3rd party libraries you import may define their own manifests. THe function similar to project-manifest, overriding the builtin manifest, but can in turn be overriden again by your own project-manifest.
 
-For correct `qux` call we want to ensure that `a` is a `Number` at the time of the function call, not at the time of its declaration. We
-can easily accomplish such a check by populating our state in correct order:
+#### project-manifest.json
+Your own project manifest file where you can define types for 3rd party libraries you integrate with as well as input coming from outside. You can also override types specified by `builtin-manifest`, if the need arises.
 
-```python
-s.newScope('function', 'qux', {
-    inputs: ['Number'],
-    returns: []
-})
-s.endScope()
-s.setVar('a', 'String')
-s.newScope('function', 'baz', {
-    inputs: ['Number', 'Number'],
-    returns: ['Number']
-})
 
-s.onCall(def(callSignature):
-		# note that if we use this s.addCall directly at this time, it will fail because 'a' holds a String
-    s.addCall('qux', {
-        inputs: [s.getTimeline('a')]
-    })
-)
-s.setReturn('Number')
-s.endScope()
+## Detour (Not Yet Implemented)
+Detour compiles into your code at debug/test time but dissapears in production. This allows you to detect inconsistencies/issues while testing while retaining performance in production. It performs a lot of the same safety checks as Interstate but at run time.
 
-s.setVar('a', 'Number')             # now it will pass
-s.addCall('baz', {                  # this s.addCall will also trigger s.addCall to 'qux'
-    inputs: [num, num]
-})
-```
+- Intelligent decoration of assignments/returns based on locations that Interstate marks as ambiguous (avoids excessive performance overhead from decorating everything)
+- Analysis of `.compile-manifest.json` file generated by Interstate to keep track of variables at run time
+- Generation of `.runtime-manifest.json` file that marks variable signatures, which Interstate can then use to make better suggestions
+- Code coverage suggestions based on observed paths hit
 
-Moreover, passing fewer or more arguments than expected to a function call will throw an error. This added safety check allows for much saner
-behavior than regular JavaScript.
+## Done vs To-Do
 
-### Kwargs Resolution
-Interstate can be used to fix function calls with keyword arguments without requiring the run-time `kwargs` decorator which slows down code
-significantly, adds a rigidity of not being able to rename variables and makes output code harder to read. Imagine the following example:
+Done:
 
-```python
-def bar(a, b, c):
-	...
+- tracking type through variable lifetime, both from constant and variable assignments
+- parsing/representation of function calls
+- interface definitions and enforcement
+- generics
+- rudimentary tests
 
-# enforce proper calls:
-bar(c=1, 2, 3)                      # error: Non-keyword argument after keyword argument
-bar(1, 2, a=3)                      # error: multiple values for argument 'a'
-bar(1, c=2, b=3)                    # ok, but switch 'b' and 'c' in function call
-```
+To Do:
 
-And here is how you would test all 3 cases via Interstate:
-
-```python
-s.newScope('function', 'bar')
-s.setArgs([{ name: 'a' }, { name: 'b' }, { name: 'c' }])
-s.endScope()
-
-s.alignInputs('bar', [
-	{ name: 'c', data: 1 },
-	{ data: 2 },
-	{ data: 3 }
-])
-
-s.alignInputs('bar', [
-	{ data: 1 },
-	{ data: 2 },
-	{ name: 'a', data: 3 }
-])
-
-s.alignInputs('bar', [
-	{ data: 1 },
-	{ name: 'c', data: 2 }
-	{ name: 'b', data: 3 }
-])
-```
-
-### Shadowing and Scope Control
-The following setup will force the exact same scoping rules as used by RapydScript:
-
-```python
-s.newScope('function')
-s.setVar('hello', 'String', ['String'])         # in this scope hello can only be string
-assert.throws(
-    def():                                      # number assignment will fail
-        s.setVar('hello', 'Number')
-    ,
-    /Can't assign value of type/
-)
-assert.throws(
-    def():                                      # can't relax earlier declaration either
-        s.setVar('hello', 'Number', ['Number', 'String'])
-    ,
-    /conflicts with earlier format/
-)
-s.setVar('hello', 'String')                     # reassignment of same type allowed
-# -- nested scope
-s.newScope('function')
-s.setVar('hello', 'Number')                     # assignment allowed (shadowed variable)
-s.endScope()
-# -- end nested scope
-assert.throws(
-    def():                                      # number assignment still fails (shadowing over)
-        s.setVar('hello', 'Number')
-    ,
-    /Can't assign value of type/
-)
-# -- nested scope #2
-s.newScope('function')
-s.markNonLocal('hello')                         # this time we disable shadowing
-assert.throws(
-    def():                                      # number assignment now fails even in nested scope
-        s.setVar('hello', 'Number')
-    ,
-    /Can't assign value of type/
-)
-s.endScope()
-# -- end nested scope
-# -- nested scope #3
-s.newScope('function')
-assert(s.getTimeline('hello').getSignature() == [{type: 'String'}]) # no assignment this time, hence we reference outer scope
-s.endScope()
-# -- end nested scope
-s.endScope()
-```
-
-Note that you aren't restricted to the same scoping rules as RapydScript for your language/compiler if you decide to use Interstate to
-power it. Simply passing `local=False` to `scope.setVar()` will have the scope behave the same way as regular JavaScript.
+- definitions + parsing of inbuilt functions/objects
+- organized test suite
+- everything for Detour

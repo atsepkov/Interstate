@@ -1,0 +1,118 @@
+from interstate import Variable, parseSignature, state
+
+# variable tests
+a = Variable('a', 1, ['Number', 'String', 'Function'])
+a.set('Number', 4)
+a.set('String', 5)
+
+b = Variable('b', 6, ['String', 'None'])
+b.set('String', 8)
+# b.set('Array', 8)
+a.set(b, 9)
+
+c = Variable('c', 9)
+c.set('None', 10)
+c.set('String', 10)
+b.set(c, 10)
+
+a.setProperty('foo', 'String', 26)
+a.setProperty('fooz', b, 26)
+
+c.terminate()
+b.terminate()
+a.terminate()
+
+d = Variable('d', 14)
+d.set('String', 15)
+d.set('String', 23)
+d.set('Number', 23)
+d.set('Array', 23)
+d.terminate()
+
+
+# interface tests
+# i = Interface('i', 30)
+
+# print(parseSignature("Function"))
+# print(parseSignature("Function(String, Number) -> String"))
+# print(parseSignature("Function(Number) -> Number"))
+# print(parseSignature('Function([MyTypes], ...([OtherTypes] or OtherTypes)) -> [MyTypes and OtherTypes]'))
+# print(parseSignature('Function(String, Number) -> String, Number'))
+# print(parseSignature('Function(String, Number) -> (String, Number)'))
+
+# # # implicit interfaces
+# # # questions about interfaces to answer:
+# # #   does interface define MINIMUM set or total? minimum is prob better
+# # #   how do we prevent extra properties? enforce ONLY ones defined? inheritance from LimitedInterface? magic decorator?
+# print(parseSignature('{foo: String, bar: Number}'))
+# print(parseSignature('{type: String}'))
+# print(parseSignature('{item: Funtion}'))
+# print(parseSignature('{type: String, baz: Function(String, String) -> String;, qux: Function(Number) -> Number}'))
+
+# print('=== ERRORS ===')
+# print(parseSignature('{type: String, baz: Function(String, String) -> String, qux: Function(Number) -> Number}'))
+
+
+
+# interstate usage
+# new scope, new class, new interface definition (If)
+state.newScope('main', 1)
+state.newClass('Nothing', 5)
+state.newGeneric('Gen', 6)
+state.newInterface('If', 8, {
+    foo: ['String'],
+    bar: ['Number']
+})
+print(state.findSignature('Nothing'))
+print(state.findSignature('Gen'))
+print(state.findSignature('If'))
+
+# new variable following If interface
+i = state.newVariable('i', 25, ['If'])
+i.set('Object', 26)
+i.setProperty('foo', 'String', 26)
+i.setProperty('fooz', 'String', 26)
+i.setProperty('bar', 'String', 26)
+i.setProperty('bar', b, 27)
+
+# basic variable
+f = Variable('f', 30)
+f.set('Number', 31)
+f.setProperty('baz', 'String', 32)
+
+# interface inheritance tests
+print('If props', state.gatherProperties('If'))
+state.newScope('scope1', 34)
+state.newInterface('If1', 35, {
+    baz: ['RegExp'],
+    qux: ['Function']
+}, ['If'])
+state.newInterface('If2', 35, {
+    quux: ['Function']
+})
+print('If1 props', state.gatherProperties('If1'))
+state.newScope('scope2', 36)
+state.newInterface('If3', 35, {
+    quuz: ['Function']
+}, ['If1', 'If2'])
+print('If3 props', state.gatherProperties('If3'))
+state.newInterface('If4', 37, {
+    quuz: ['String']
+}, ['If3'])
+print('If4 props', state.gatherProperties('If4'))
+
+# generic function output/input tests
+state.newVariable('genericTest', 39, ['Function(Gen) -> Gen'])
+print('---')
+state.invoke('genericTest', 'String')
+
+
+# generic inheritance tests, not ready yet
+# state.newGeneric('Gen1', 39, ['Gen'])
+
+state.endScope()
+state.endScope()
+
+
+i.terminate()
+f.terminate()
